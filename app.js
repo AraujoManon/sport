@@ -8,15 +8,13 @@ const STORE = 'monCadre_v4';
 const OLD_STORE = 'monCadre_v3';
 const DEFAULT_SETTINGS = {
   startDate: '2026-07-07', weightStart: 86, weightGoal: 80,
-  waterGoal: 2000, glass: 250, rest: 90, theme: 'auto',
-  sex: '', height: 0, birthYear: 0, stepsGoal: 8000, deficit: 300,
-  modules: { kcal: true, pas: true, eau: true, souffle: true, courses: true, tests: true }
+  waterGoal: 2250, glass: 750, rest: 90, theme: 'auto', stepsGoal: 8000,
+  modules: { pas: true, eau: true, souffle: true, tests: true }
 };
 const blank = () => ({
   version: 4, settings: { ...DEFAULT_SETTINGS },
   weights: [], water: {}, sessions: [], exoLast: {}, tests: {},
-  breath: [], goalsDone: {}, shopping: [], notes: '', draft: null,
-  food: {}, steps: {}, favMeals: []
+  breath: [], goalsDone: {}, notes: '', draft: null, steps: {}
 });
 let state = blank();
 
@@ -48,7 +46,6 @@ function migrateV3(o) {
   const s = blank();
   s.weights = (o.weights || []).filter(w => w && w.date && +w.value).map(w => ({ date: w.date, value: +w.value }));
   s.tests = o.tests || {};
-  s.shopping = (o.shopping || []).map(x => ({ name: x.name, done: !!x.done }));
   s.notes = o.userNotes || '';
   s.goalsDone = o.goalsChecked || {};
   s.breath = (o.breathLogs || []).map(b => ({ date: b.date, tech: b.techId, sec: b.durationSec || 0 }));
@@ -72,7 +69,7 @@ function normalize(o) {
   if (o.version !== 4) return migrateV3(o);
   const s = { ...blank(), ...o };
   s.settings = { ...DEFAULT_SETTINGS, ...(o.settings || {}) };
-  s.settings.modules = { ...DEFAULT_SETTINGS.modules, ...(o.settings?.modules || {}) };
+  s.settings.modules = Object.fromEntries(Object.keys(DEFAULT_SETTINGS.modules).map(m => [m, o.settings?.modules?.[m] ?? true]));
   return s;
 }
 function load() {
@@ -180,9 +177,8 @@ function segInit(id, onChange) {
 function panelSwitch(screen, p) {
   $$(`${screen} [data-panel]`).forEach(x => x.hidden = x.dataset.panel !== p);
 }
-let progTab = 'poids', bienTab = 'souffle';
+let progTab = 'poids';
 segInit('#progSeg', b => { progTab = b.dataset.p; panelSwitch('#s-progres', progTab); renderProgres(); });
-segInit('#bienSeg', b => { bienTab = b.dataset.p; panelSwitch('#s-bien', bienTab); renderBien(); });
 
 function render() {
   $('#todayDate').textContent = fmtLong(today()).replace(/^./, c => c.toUpperCase());
@@ -219,7 +215,6 @@ function renderToday() {
   $('#lgP').textContent = M.pas ? (steps ? num(steps, 0) : 'À noter') : (w ? num(w.value) + ' kg' : 'À faire');
   $('#lgWrow').hidden = !M.pas;
   $('#lgW').textContent = w ? num(w.value) + ' kg' : 'À faire';
-  if (M.kcal) renderFoodCard();
   if (M.pas) renderStepsCard();
 
   // Séance du jour
@@ -245,8 +240,9 @@ function renderToday() {
 
   // Eau
   const g = state.settings.glass, n = Math.max(Math.ceil(goal / g), Math.ceil(ml / g));
-  $('#glasses').innerHTML = Array.from({ length: n }, (_, i) => `<i class="glass${i < Math.round(ml / g) ? ' full' : ''}"></i>`).join('');
-  $('#waterTxt').textContent = ml >= goal ? 'objectif atteint' : 'encore ' + Math.ceil((goal - ml) / g) + ' verre' + ((goal - ml) / g > 1 ? 's' : '');
+  const word = g >= 500 ? 'bouteille' : 'verre', left = Math.ceil((goal - ml) / g);
+  $('#glasses').innerHTML = Array.from({ length: n }, (_, i) => `<i class="glass${g >= 500 ? ' bottle' : ''}${i < Math.round(ml / g) ? ' full' : ''}"></i>`).join('');
+  $('#waterTxt').textContent = ml >= goal ? 'objectif atteint' : `encore ${left} ${word}${left > 1 ? 's' : ''} de ${num(g / 1000, 2)} L`;
 
   // Pesée
   const prev = state.weights.filter(x => x.date < k).at(-1);
@@ -297,7 +293,7 @@ $('#breathSuggest').onclick = e => startBreath(e.currentTarget.dataset.id);
    SÉANCE GUIDÉE
    ========================================================= */
 function buildSets(e) {
-  const last = state.exoLast[e.n];
+  const last = state.exoLast[e.n]?.sets?.length ? state.exoLast[e.n] : exoHistory(e.n).at(-1);
   if (last?.sets?.length) return last.sets.map(s => ({ kg: s.kg, reps: s.reps, ok: false }));
   const u = unitOf(e);
   if (u === 'min' || u === 'cycles') {
@@ -353,6 +349,8 @@ function renderStep() {
   let html = `<div class="ses-card"><h3>${esc(e.n)}</h3><p class="spec">${prettySpec(e.s)}</p>`;
   if (e.d) html += `<div class="tip">${esc(e.d)}</div>`;
   if (e.t) html += `<div class="tip${/PALIER/.test(e.t) ? ' palier' : ''}">${esc(e.t)}</div>`;
+  const hist = sets ? exoHistory(e.n) : [];
+  if (hist.length) html += `<div class="ses-prog"><p class="hint">La dernière fois (${fmtShort(hist.at(-1).date)}) : ${esc(setsTxt(hist.at(-1).sets, hist.at(-1).unit || unitOf(e)))}</p>${hist.length > 1 ? '<div id="sesProg"></div>' : ''}</div>`;
   if (sug) html += `<div class="suggest"><span class="grow">La dernière fois, toutes tes séries étaient réussies. Essaie <b>${num(sug.to)} kg</b>.</span><button class="btn small soft" data-act="sug">Appliquer</button></div>`;
   if (!sets) {
     html += `<p class="hint" style="text-align:center;margin:16px 0 4px">Rien à noter ici : appuie sur « Terminé » quand c'est fait.</p>`;
@@ -371,6 +369,10 @@ function renderStep() {
     <div class="btns" style="margin-top:8px">${d.step ? '<button class="btn ghost" data-act="prev">Précédent</button>' : ''}<button class="btn ghost" data-act="skip">Passer</button></div>
     </div><div id="restBar"></div>`;
   $('#sesBody').innerHTML = html;
+  if (hist.length > 1) {
+    const M = exoMetric(e.n, hist);
+    Charts.line($('#sesProg'), { title: 'Progression ' + e.n, unit: M.unit, height: 90, table: false, series: [{ name: M.label, color: COLORS().rose, dots: true, points: M.pts }] });
+  }
   paintRest();
 }
 const stepper = (i, f, v, u) => `<div class="stepper"><button data-adj="${i}|${f}|-1" aria-label="Moins">−</button><output>${num(v)}</output><span class="u">${u}</span><button data-adj="${i}|${f}|1" aria-label="Plus">+</button></div>`;
@@ -550,7 +552,7 @@ function rolling(list, days = 7) {
   });
 }
 function renderProgres() {
-  ({ poids: renderPoids, kcal: renderKcal, pas: renderPas, exos: renderExos, eau: renderEau, tests: renderTests, regul: renderRegul })[progTab]();
+  ({ poids: renderPoids, pas: renderPas, exos: renderExos, eau: renderEau, tests: renderTests, regul: renderRegul })[progTab]();
 }
 function stat(label, value, unit = '', delta = '', cls = '') {
   return `<div class="stat"><div class="l">${label}</div><div class="n">${value}${unit ? `<small>${unit}</small>` : ''}</div>${delta ? `<div class="d ${cls}">${delta}</div>` : ''}</div>`;
@@ -592,45 +594,66 @@ $('#wList').addEventListener('click', e => {
 function exoHistory(name) {
   return state.sessions.filter(s => s.exos?.[name]).sort((a, b) => a.date.localeCompare(b.date)).map(s => ({ date: s.date, ...s.exos[name] }));
 }
-let exoSel = null;
+// Ordre et regroupement des exercices selon le programme (phase actuelle d'abord).
+const EXO_GROUPS = [[1, 'Bas du corps'], [5, 'Bas du corps'], [3, 'Haut du corps et gainage'], [2, 'Course'], [4, 'Course']];
+function exoOrder() {
+  const map = new Map(), cur = phaseInfo().num;
+  [cur, 1, 2, 3].forEach(ph => EXO_GROUPS.forEach(([d, g]) => PROGRAMS[ph][d].exos.forEach(e => { if (!map.has(e.n)) map.set(e.n, { g, i: map.size }); })));
+  return map;
+}
+// Ce qu'on suit pour un exercice : charge max, assistance minimale (moins = mieux), ou meilleure série.
+function exoMetric(name, H) {
+  const def = exoDef(name);
+  const anyKg = H.some(h => h.sets.some(s => s.kg > 0));
+  const assisted = (def ? isAssisted(def) : /assist/i.test(name)) && anyKg;
+  const weighted = !assisted && anyKg;
+  const unit = assisted || weighted ? 'kg' : (H.at(-1)?.unit || (def ? unitOf(def) : 'rép.'));
+  const val = h => assisted ? Math.min(...h.sets.map(s => s.kg)) : weighted ? Math.max(...h.sets.map(s => s.kg)) : Math.max(...h.sets.map(s => s.reps));
+  const pts = H.map(h => ({ date: h.date, y: val(h) }));
+  const ys = pts.map(p => p.y);
+  return {
+    assisted, weighted, unit, pts,
+    label: assisted ? 'Assistance' : weighted ? 'Charge max' : ({ s: 'Meilleure tenue', min: 'Durée', cycles: 'Cycles' }[unit] || 'Meilleure série'),
+    best: assisted ? Math.min(...ys) : Math.max(...ys),
+    delta: ys.at(-1) - ys[0],
+    better: assisted ? ys.at(-1) < ys[0] : ys.at(-1) > ys[0]
+  };
+}
+const setsTxt = (sets, unit) => sets.map(s => (s.kg ? num(s.kg) + ' kg × ' : '') + num(s.reps) + (s.kg ? '' : ' ' + unit)).join(', ');
 function renderExos() {
-  const names = [...new Set(state.sessions.flatMap(s => Object.keys(s.exos || {})))].sort((a, b) => a.localeCompare(b, 'fr'));
-  const sel = $('#exoSelect');
+  const names = [...new Set(state.sessions.flatMap(s => Object.keys(s.exos || {})))];
+  const order = exoOrder();
+  const G = ['Bas du corps', 'Haut du corps et gainage', 'Course'];
+  const rank = n => { const o = order.get(n); return o ? G.indexOf(o.g) * 1000 + o.i : 9999; };
+  names.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, 'fr'));
+  const box = $('#exoCards');
   if (!names.length) {
-    sel.innerHTML = '<option>Aucun exercice noté</option>';
-    ['#exoStats', '#exoChart', '#exoVolChart'].forEach(id => $(id).innerHTML = '');
-    $('#exoChart').innerHTML = '<p class="empty">Fais une séance guidée : chaque série notée viendra nourrir ces courbes.</p>';
+    box.innerHTML = '<div class="card"><p class="empty">Fais une séance guidée et coche tes séries : chaque exercice aura ici sa propre courbe.</p></div>';
   } else {
-    if (!names.includes(exoSel)) exoSel = names[0];
-    sel.innerHTML = names.map(n => `<option${n === exoSel ? ' selected' : ''}>${esc(n)}</option>`).join('');
-    const H = exoHistory(exoSel), C = COLORS();
-    const weighted = H.some(h => h.sets.some(s => s.kg > 0));
-    const def = exoDef(exoSel);
-    const unit = H.at(-1).unit || (def ? unitOf(def) : 'rép.');
-    const time = unit !== 'rép.';
-    const maxPts = H.map(h => ({ date: h.date, y: weighted ? Math.max(...h.sets.map(s => s.kg)) : Math.max(...h.sets.map(s => s.reps)) }));
-    const volPts = H.map(h => ({ date: h.date, y: h.sets.reduce((a, s) => a + (weighted ? s.kg * s.reps : s.reps), 0) }));
-    const best = Math.max(...maxPts.map(p => p.y));
-    const first = maxPts[0].y, lastV = maxPts.at(-1).y;
-    $('#exoStats').innerHTML = [
-      stat(weighted ? 'Charge max récente' : 'Meilleure série récente', num(lastV), weighted ? 'kg' : unit, fmtShort(H.at(-1).date)),
-      stat('Record', num(best), weighted ? 'kg' : unit),
-      stat('Progression', signed(lastV - first), weighted ? 'kg' : unit, 'depuis le ' + fmtShort(H[0].date), lastV > first ? 'good' : ''),
-      stat('Séances', H.length)
-    ].join('');
-    $('#exoChart').previousElementSibling.textContent = weighted ? 'Charge maximale par séance' : ({ s: 'Meilleure tenue par séance', min: 'Durée par séance', cycles: 'Cycles par séance' }[unit] || 'Meilleure série par séance');
-    $('#exoVolChart').previousElementSibling.innerHTML = weighted ? 'Volume total par séance <small class="hint">(kg × répétitions)</small>' : 'Total par séance';
-    Charts.line($('#exoChart'), { title: exoSel, unit: weighted ? 'kg' : unit, series: [{ name: exoSel, color: C.rose, area: true, points: maxPts }], empty: 'Encore une séance de cet exercice et la courbe apparaîtra.' });
-    Charts.line($('#exoVolChart'), { title: 'Volume ' + exoSel, unit: weighted ? 'kg' : unit, decimals: 0, series: [{ name: 'Volume', color: C.olive, points: volPts }], empty: 'Encore une séance de cet exercice et la courbe apparaîtra.' });
+    const C = COLORS();
+    let html = '', lastG = null;
+    const charts = [];
+    names.forEach((n, i) => {
+      const H = exoHistory(n), M = exoMetric(n, H), g = order.get(n)?.g || 'Autres';
+      if (g !== lastG) { html += `<h3 class="exo-group">${esc(g)}</h3>`; lastG = g; }
+      const d = H.length > 1 ? `<span class="badge${M.better ? ' up' : ''}">${signed(M.delta)} ${M.unit}</span>` : '';
+      html += `<div class="card exo-card"><div class="row between"><h3>${esc(n)}</h3>${d}</div>
+        <p class="hint">${M.label}${M.assisted ? ' (moins = mieux)' : ''} : <b>${num(M.pts.at(-1).y)} ${M.unit}</b> la dernière fois, record ${num(M.best)} ${M.unit}, ${H.length} séance${H.length > 1 ? 's' : ''}</p>
+        <div id="ec-${i}"></div>
+        <details class="table-toggle"><summary>Détail des séances</summary>
+        ${H.slice().reverse().slice(0, 12).map(h => `<div class="list-row"><span class="date">${fmtShort(h.date)}</span><span class="grow">${esc(setsTxt(h.sets, h.unit || M.unit))}</span></div>`).join('')}</details></div>`;
+      charts.push([i, n, M]);
+    });
+    box.innerHTML = html;
+    charts.forEach(([i, n, M]) => Charts.line($('#ec-' + i), {
+      title: n, unit: M.unit, height: 130, table: false, empty: 'Encore une séance de cet exercice et la courbe apparaîtra.',
+      series: [{ name: M.label, color: C.rose, area: true, dots: true, points: M.pts }]
+    }));
   }
   // Records
   const rows = [];
   if (state.weights.length) rows.push(['Poids le plus bas', num(Math.min(...state.weights.map(w => w.value))) + ' kg']);
-  names.forEach(n => {
-    const H = exoHistory(n), w = H.some(h => h.sets.some(s => s.kg > 0));
-    if (!w) return;
-    rows.push([n, num(Math.max(...H.flatMap(h => h.sets.map(s => s.kg)))) + ' kg']);
-  });
+  names.forEach(n => { const M = exoMetric(n, exoHistory(n)); rows.push([n + (M.assisted ? ' (assistance la plus faible)' : ''), num(M.best) + ' ' + M.unit]); });
   TESTS.forEach(t => {
     const L = state.tests[t.id]; if (!L?.length) return;
     const v = L.map(x => x.value);
@@ -638,7 +661,6 @@ function renderExos() {
   });
   $('#records').innerHTML = rows.length ? rows.map(r => `<div class="list-row"><span class="grow">${esc(r[0])}</span><span class="val">${esc(r[1])}</span></div>`).join('') : '<p class="empty">Tes records se rempliront tout seuls au fil des séances.</p>';
 }
-$('#exoSelect').addEventListener('change', e => { exoSel = e.target.value; renderExos(); });
 
 function renderEau() {
   const goal = state.settings.waterGoal, C = COLORS();
@@ -729,53 +751,14 @@ $('#calNext').onclick = () => { if (calOffset < 0) { calOffset++; renderRegul();
    BIEN-ÊTRE
    ========================================================= */
 function renderBien() {
-  if (bienTab === 'souffle') {
-    const m = today().slice(0, 7);
-    const mins = Math.round(state.breath.filter(b => b.date.startsWith(m)).reduce((a, b) => a + b.sec, 0) / 60);
-    $('#breathStats').textContent = mins ? `${mins} minute${mins > 1 ? 's' : ''} de respiration ce mois-ci.` : 'Choisis une technique selon ce dont tu as besoin.';
-    $('#breathList').innerHTML = BREATH.map(t => `<button class="card tech" data-b="${t.id}"><h3>${esc(t.name)}</h3>
-      <div class="tags">${t.tags.map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
-      <p class="hint">${esc(t.rhythm)}, ${Math.round(t.duration / 60)} min</p><p style="font-size:.9rem;margin-top:4px">${esc(t.benefits)}</p></button>`).join('');
-  }
-  if (bienTab === 'assiette') {
-    const cats = [
-      ['legumes', 'Légumes', 'yes'], ['fruits', 'Fruits', 'yes'], ['prot', 'Protéines', 'yes'], ['cer', 'Céréales et féculents', 'yes'],
-      ['fat', 'Bons gras', 'yes'], ['spice', 'Épices et herbes', 'yes'], ['bev', 'Boissons', 'yes'], ['mod', 'Avec modération', 'mod'], ['no', 'À éviter', 'no']
-    ];
-    const label = { yes: 'à volonté', mod: 'parfois', no: 'rarement' };
-    const inList = new Set(state.shopping.map(s => s.name));
-    $('#foods').innerHTML = cats.map(([id, name, st]) => `<div class="card food-cat"><div class="row between"><h3>${name}</h3><span class="pill-${st}">${label[st]}</span></div>
-      <div class="chips">${FOODS[id].map(f => `<button class="chip" aria-pressed="${inList.has(f)}" data-food="${esc(f)}">${esc(f)}</button>`).join('')}</div></div>`).join('');
-  }
-  if (bienTab === 'courses') {
-    const L = state.shopping;
-    $('#shopList').innerHTML = L.length ? L.map((s, i) => `<div class="list-row"><button class="check" role="checkbox" aria-checked="${s.done}" data-si="${i}" aria-label="${esc(s.name)}"></button>
-      <span class="grow ${s.done ? 'done-txt' : ''}">${esc(s.name)}</span><button class="del" data-sdel="${i}" aria-label="Retirer ${esc(s.name)}">${ICON_X}</button></div>`).join('')
-      : '<p class="empty">Ta liste est vide. Ajoute un article ci-dessus ou depuis l\'onglet Alimentation.</p>';
-  }
+  const m = today().slice(0, 7);
+  const mins = Math.round(state.breath.filter(b => b.date.startsWith(m)).reduce((a, b) => a + b.sec, 0) / 60);
+  $('#breathStats').textContent = mins ? `${mins} minute${mins > 1 ? 's' : ''} de respiration ce mois-ci.` : 'Choisis une technique selon ce dont tu as besoin.';
+  $('#breathList').innerHTML = BREATH.map(t => `<button class="card tech" data-b="${t.id}"><h3>${esc(t.name)}</h3>
+    <div class="tags">${t.tags.map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
+    <p class="hint">${esc(t.rhythm)}, ${Math.round(t.duration / 60)} min</p><p style="font-size:.9rem;margin-top:4px">${esc(t.benefits)}</p></button>`).join('');
 }
 $('#breathList').addEventListener('click', e => { const b = e.target.closest('[data-b]'); if (b) startBreath(b.dataset.b); });
-$('#foods').addEventListener('click', e => {
-  const b = e.target.closest('[data-food]'); if (!b) return;
-  const n = b.dataset.food, on = b.getAttribute('aria-pressed') !== 'true';
-  if (on) state.shopping.push({ name: n, done: false }); else state.shopping = state.shopping.filter(s => s.name !== n);
-  b.setAttribute('aria-pressed', on); save();
-});
-$('#shopList').addEventListener('click', e => {
-  const c = e.target.closest('[data-si]'), d = e.target.closest('[data-sdel]');
-  if (c) { const s = state.shopping[c.dataset.si]; s.done = !s.done; save(); renderBien(); }
-  if (d) { const [old] = state.shopping.splice(d.dataset.sdel, 1); save(); renderBien(); toast('Article retiré.', { label: 'Annuler', run: () => { state.shopping.splice(+d.dataset.sdel, 0, old); save(); renderBien(); } }); }
-});
-$('#addShop').addEventListener('submit', e => {
-  e.preventDefault();
-  const v = $('#shopInput').value.trim(); if (!v) return;
-  state.shopping.push({ name: v, done: false }); $('#shopInput').value = ''; save(); renderBien();
-});
-$('#shopClearDone').onclick = () => { state.shopping = state.shopping.filter(s => !s.done); save(); renderBien(); };
-$('#shopClear').onclick = async () => {
-  if (!state.shopping.length) return;
-  if (await confirmDlg('Vider la liste ?', 'Tous les articles seront retirés.', 'Vider')) { state.shopping = []; save(); renderBien(); }
-};
 
 /* Respiration guidée */
 let br = null;
@@ -817,140 +800,13 @@ $('#dlgBreath').addEventListener('close', () => stopBreath(false));
 
 
 /* =========================================================
-   ÉNERGIE : dépense estimée, assiette, pas
+   PAS
    ========================================================= */
-const MET = { 'Marche': 3.5, 'Course': 8, 'Randonnée': 6, 'Yoga / souplesse': 2.5, 'Force à la maison': 3.5, 'Street workout': 4, 'Tennis': 7, 'Vélo': 6, 'Natation': 6, 'Danse': 5, 'Autre': 4 };
-const MEALS = { matin: 'Petit-déjeuner', midi: 'Déjeuner', soir: 'Dîner', snack: 'En-cas' };
-function weightOn(k) { return (state.weights.filter(w => w.date <= k).at(-1) || state.weights[0])?.value || state.settings.weightStart; }
-function bmrOn(k) {
-  const S = state.settings;
-  if (!S.sex || !S.height || !S.birthYear) return null;
-  const age = dateOf(k).getFullYear() - S.birthYear;
-  return Math.round(10 * weightOn(k) + 6.25 * S.height - 5 * age + (S.sex === 'm' ? 5 : -161));
-}
-// Dépense du jour = métabolisme × 1,2 (vie quotidienne, ~3 000 pas inclus) + pas au-delà + séances.
-function energyOn(k) {
-  const bmr = bmrOn(k); if (!bmr) return null;
-  const w = weightOn(k), steps = state.steps[k] || 0;
-  const stepsK = Math.max(0, steps - 3000) * 0.00055 * w;
-  let act = 0;
-  sessionsOn(k).forEach(s => {
-    if (s.free && steps && /Marche|Randonnée/.test(s.type)) return; // déjà dans les pas
-    const met = s.free ? (MET[s.type] || 4) : s.kind === 'course' ? 6 : 3.5;
-    const min = s.min || (s.free ? 30 : 50);
-    act += (met - 1) * w * min / 60;
-  });
-  const total = Math.round(bmr * 1.2 + stepsK + act);
-  const budget = Math.max(bmr, 1200, total - state.settings.deficit);
-  return { bmr, total, stepsK: Math.round(stepsK), act: Math.round(act), budget };
-}
-const eatenOn = k => (state.food[k] || []).reduce((a, x) => a + x.kcal, 0);
-function mealNow() { const h = new Date().getHours(); return h < 11 ? 'matin' : h < 15 ? 'midi' : h < 18 ? 'snack' : 'soir'; }
-let meal = mealNow(), pending = [];
-
-function renderFoodCard() {
-  const k = today(), eaten = eatenOn(k), en = energyOn(k);
-  $$('#mealSeg button').forEach(b => b.setAttribute('aria-selected', b.dataset.m === meal));
-  const meter = $('#kcalMeter');
-  if (en) {
-    const left = en.budget - eaten;
-    $('#kcalTxt').textContent = num(eaten, 0) + ' / ' + num(en.budget, 0) + ' kcal';
-    meter.hidden = false;
-    meter.querySelector('i').style.width = Math.min(100, eaten / en.budget * 100) + '%';
-    meter.classList.toggle('over', left < 0);
-    meter.setAttribute('aria-valuenow', Math.round(eaten / en.budget * 100));
-    $('#kcalHint').textContent = left >= 0 ? `Encore environ ${num(left, 0)} kcal. Dépense estimée : ${num(en.total, 0)} kcal.`
-      : `${num(-left, 0)} kcal au-dessus de ta marge du jour. Rien de grave : c'est la moyenne de la semaine qui compte.`;
-  } else {
-    $('#kcalTxt').textContent = num(eaten, 0) + ' kcal';
-    meter.hidden = true;
-    $('#kcalHint').innerHTML = 'Renseigne ton sexe, ta taille et ton année de naissance dans <button class="link" data-goto="moi">Moi</button> pour calculer ta marge du jour.';
-  }
-  $('#favChips').innerHTML = state.favMeals.map((f, i) => `<button class="chip fav" data-fav="${i}">${esc(f.name)} · ${num(f.items.reduce((a, x) => a + x.kcal, 0), 0)} kcal</button>`).join('');
-  const L = state.food[k] || [];
-  $('#foodDay').innerHTML = Object.keys(MEALS).filter(m => L.some(x => x.meal === m)).map(m => {
-    const its = L.filter(x => x.meal === m);
-    return `<p class="meal-h">${MEALS[m]} <span class="hint">${num(its.reduce((a, x) => a + x.kcal, 0), 0)} kcal</span></p>` +
-      its.map(x => `<div class="food-row"><span class="grow">${esc(shortName(x.name))} <span class="hint">${num(x.g, 0)} g</span></span><span class="k">${num(x.kcal, 0)} kcal</span><button class="del" data-fdel="${x.id}" aria-label="Retirer ${esc(x.name)}">${ICON_X}</button></div>`).join('');
-  }).join('');
-}
-const shortName = n => n.split(',').slice(0, 2).join(',').replace(/\s*\(.*?\)/g, '');
-$('#mealSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { meal = b.dataset.m; renderFoodCard(); } });
-$('#s-today').addEventListener('click', e => { const g = e.target.closest('[data-goto]'); if (g) go(g.dataset.goto); });
-$('#foodForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  const t = $('#foodText').value.trim();
-  if (!t) { toast('Écris ce que tu as mangé, par exemple « 2 œufs et une pomme ».'); return; }
-  try { pending = await Nutrition.estimate(t); }
-  catch { toast('La table des aliments n\'a pas pu être chargée. Ouvre l\'app une fois avec du réseau.'); return; }
-  $('#favSave').checked = false; $('#favNameField').hidden = true; $('#favName').value = '';
-  renderPending();
-  $('#dlgFood').showModal();
-});
-function renderPending() {
-  $('#foodItems').innerHTML = pending.map((it, i) => it.found ? `<div class="fi">
-      <span class="src">« ${esc(it.text)} »${it.guessed ? ', quantité devinée' : ''}</span>
-      <select data-pi="${i}" aria-label="Aliment pour ${esc(it.text)}">${it.alts.map(a => `<option value="${a.code}"${a.code === it.code ? ' selected' : ''}>${esc(shortName(a.name))}</option>`).join('')}</select>
-      <div class="gr"><input type="number" inputmode="numeric" min="0" value="${it.g}" data-pg="${i}" aria-label="Grammes"><span class="hint">g</span><span class="k" id="pk${i}">${num(it.kcal, 0)} kcal</span>
-      <button type="button" class="del" data-prm="${i}" aria-label="Retirer">${ICON_X}</button></div></div>`
-    : `<div class="fi miss">Je n'ai pas reconnu « ${esc(it.text)} ». Reformule-le avec un mot plus courant.</div>`).join('');
-  $('#foodTotal').textContent = num(pending.filter(x => x.found).reduce((a, x) => a + x.kcal, 0), 0) + ' kcal';
-}
-$('#foodItems').addEventListener('change', e => {
-  const i = e.target.dataset.pi ?? e.target.dataset.pg; if (i === undefined) return;
-  const it = pending[i];
-  pending[i] = Nutrition.recompute(it, e.target.dataset.pi !== undefined ? +e.target.value : it.code, e.target.dataset.pg !== undefined ? Math.max(0, +e.target.value || 0) : it.g);
-  renderPending();
-});
-$('#foodItems').addEventListener('click', e => { const b = e.target.closest('[data-prm]'); if (b) { pending.splice(+b.dataset.prm, 1); renderPending(); } });
-$('#favSave').addEventListener('change', e => { $('#favNameField').hidden = !e.target.checked; if (e.target.checked) $('#favName').focus(); });
-$('#foodReview').addEventListener('submit', e => {
-  e.preventDefault();
-  const items = pending.filter(x => x.found && x.g > 0).map(({ code, name, g, kcal, p, c, f }) => ({ code, name, g, kcal, p, c, f }));
-  if (!items.length) { $('#dlgFood').close(); return; }
-  addFood(items);
-  if ($('#favSave').checked) {
-    state.favMeals.push({ name: $('#favName').value.trim() || MEALS[meal], items }); save();
-  }
-  $('#foodText').value = '';
-  $('#dlgFood').close();
-  toast(num(items.reduce((a, x) => a + x.kcal, 0), 0) + ' kcal ajoutées au ' + MEALS[meal].toLowerCase() + '.');
-});
-function addFood(items) {
-  const k = today();
-  (state.food[k] ||= []).push(...items.map(x => ({ ...x, id: uid(), meal })));
-  save(); renderToday();
-}
-$('#favChips').addEventListener('click', e => {
-  const b = e.target.closest('[data-fav]'); if (!b) return;
-  const f = state.favMeals[b.dataset.fav];
-  const before = (state.food[today()] || []).length;
-  addFood(f.items);
-  toast(f.name + ' ajouté.', { label: 'Annuler', run: () => { state.food[today()].splice(before); save(); renderToday(); } });
-});
-$('#foodDay').addEventListener('click', e => {
-  const id = e.target.closest('[data-fdel]')?.dataset.fdel; if (!id) return;
-  const L = state.food[today()], i = L.findIndex(x => x.id === id), [old] = L.splice(i, 1);
-  save(); renderToday();
-  toast('Aliment retiré.', { label: 'Annuler', run: () => { L.splice(i, 0, old); save(); renderToday(); } });
-});
-function renderFavList() {
-  $('#favList').innerHTML = state.favMeals.length ? state.favMeals.map((f, i) => `<div class="list-row"><div class="grow"><b>${esc(f.name)}</b>
-    <div class="hint">${esc(f.items.map(x => shortName(x.name).split(',')[0]).join(', '))} · ${num(f.items.reduce((a, x) => a + x.kcal, 0), 0)} kcal</div></div>
-    <button class="del" data-favdel="${i}" aria-label="Supprimer ${esc(f.name)}">${ICON_X}</button></div>`).join('')
-    : '<p class="empty">Après une estimation, coche « Enregistrer comme repas habituel » pour l\'ajouter ensuite d\'un seul geste.</p>';
-}
-$('#favList').addEventListener('click', async e => {
-  const i = e.target.closest('[data-favdel]')?.dataset.favdel; if (i === undefined) return;
-  if (!await confirmDlg('Supprimer ce repas habituel ?', state.favMeals[i].name, 'Supprimer')) return;
-  state.favMeals.splice(i, 1); save(); renderFavList();
-});
-
 function renderStepsCard() {
-  const k = today(), st = state.steps[k] || 0, w = weightOn(k), goal = state.settings.stepsGoal;
+  const k = today(), st = state.steps[k] || 0, goal = state.settings.stepsGoal;
   $('#stepsInput').value = ''; $('#stepsInput').placeholder = st ? 'Corriger : ' + num(st, 0) + ' pas' : 'Pas du jour (Google Fit, Samsung Santé…)';
   $('#stepsTxt').textContent = st >= goal ? 'objectif atteint' : st ? 'encore ' + num(goal - st, 0) : 'objectif ' + num(goal, 0);
-  $('#stepsHint').textContent = st ? `${num(st, 0)} pas, soit environ ${num(Math.round(st * 0.00055 * w), 0)} kcal brûlées en marchant (environ ${num(st * 0.00072, 1)} km).`
+  $('#stepsHint').textContent = st ? `${num(st, 0)} pas, soit environ ${num(st * 0.00072, 1)} km.`
     : 'Recopie le nombre de pas affiché par ton téléphone, le soir par exemple.';
 }
 $('#stepsForm').addEventListener('submit', e => {
@@ -961,33 +817,6 @@ $('#stepsForm').addEventListener('submit', e => {
   toast(v >= state.settings.stepsGoal ? 'Objectif de pas atteint. Bravo.' : 'Pas notés.');
 });
 
-function renderKcal() {
-  const C = COLORS(), days = Array.from({ length: 14 }, (_, i) => addDays(today(), i - 13));
-  const logged = days.slice(7).filter(k => (state.food[k] || []).length);
-  const avgE = logged.length ? logged.reduce((a, k) => a + eatenOn(k), 0) / logged.length : null;
-  const ens = logged.map(energyOn).filter(Boolean);
-  const avgD = ens.length ? ens.reduce((a, x) => a + x.total, 0) / ens.length : null;
-  const P = k => (state.food[k] || []).reduce((a, x) => ({ p: a.p + x.p, c: a.c + x.c, f: a.f + x.f }), { p: 0, c: 0, f: 0 });
-  const mac = logged.map(P).reduce((a, x) => ({ p: a.p + x.p / logged.length, c: a.c + x.c / logged.length, f: a.f + x.f / logged.length }), { p: 0, c: 0, f: 0 });
-  $('#kcalStats').innerHTML = [
-    stat('Mangé, moyenne 7 j', avgE === null ? '—' : num(avgE, 0), avgE === null ? '' : 'kcal', logged.length + ' jour' + (logged.length > 1 ? 's' : '') + ' notés'),
-    stat('Dépense estimée', avgD === null ? '—' : num(avgD, 0), avgD === null ? '' : 'kcal', avgD === null ? 'profil à compléter dans Moi' : 'moyenne des mêmes jours'),
-    stat('Bilan moyen', avgE === null || avgD === null ? '—' : signed(Math.round(avgE - avgD)).replace(',0', ''), avgE === null || avgD === null ? '' : 'kcal/j', avgE !== null && avgD !== null ? (avgE < avgD ? 'en déficit' : 'en surplus') : '', avgE !== null && avgD !== null ? (avgE < avgD ? 'good' : 'bad') : ''),
-    stat('Protéines, moyenne', logged.length ? num(mac.p, 0) : '—', logged.length ? 'g/j' : '', logged.length ? `glucides ${num(mac.c, 0)} g, lipides ${num(mac.f, 0)} g` : '')
-  ].join('');
-  Charts.line($('#kcalChart'), {
-    title: 'Calories mangées et dépensées', unit: 'kcal', decimals: 0, empty: 'Note tes repas sur l\'écran Aujourd\'hui pour voir la courbe.',
-    series: [
-      { name: 'Mangé', color: C.rose, dots: true, points: days.filter(k => (state.food[k] || []).length).map(k => ({ date: k, y: eatenOn(k) })) },
-      { name: 'Dépense estimée', color: C.olive, points: days.map(k => ({ date: k, e: energyOn(k) })).filter(x => x.e && (state.food[x.date] || []).length).map(x => ({ date: x.date, y: x.e.total })) }
-    ]
-  });
-  const recent = days.slice().reverse().filter(k => (state.food[k] || []).length);
-  $('#kcalLog').innerHTML = recent.length ? recent.map(k => {
-    const en = energyOn(k), e = eatenOn(k);
-    return `<div class="list-row"><span class="date">${fmtShort(k)}</span><span class="val grow">${num(e, 0)} kcal</span>${en ? `<span class="hint">${signed(e - en.total).replace(',0', '')}</span>` : ''}</div>`;
-  }).join('') : '<p class="empty">Aucun repas noté ces deux dernières semaines.</p>';
-}
 function renderPas() {
   const C = COLORS(), goal = state.settings.stepsGoal;
   const days = Array.from({ length: 14 }, (_, i) => addDays(today(), i - 13));
@@ -1014,12 +843,8 @@ function applyModules() {
   if ($(`#progSeg [data-p="${progTab}"]`).hidden) { progTab = firstVisible('#progSeg').dataset.p; }
   $$('#progSeg button').forEach(b => b.setAttribute('aria-selected', b.dataset.p === progTab));
   panelSwitch('#s-progres', progTab);
-  const bienOn = M.souffle || M.courses;
-  $('.nav [data-s="bien"]').hidden = !bienOn;
-  if (bienOn && $(`#bienSeg [data-p="${bienTab}"]`).hidden) bienTab = firstVisible('#bienSeg').dataset.p;
-  $$('#bienSeg button').forEach(b => b.setAttribute('aria-selected', b.dataset.p === bienTab));
-  panelSwitch('#s-bien', bienTab);
-  if (!bienOn && current === 'bien') go('today');
+  $('.nav [data-s="bien"]').hidden = !M.souffle;
+  if (!M.souffle && current === 'bien') go('today');
 }
 
 /* =========================================================
@@ -1052,9 +877,8 @@ function renderMoi() {
   }).join('');
   const notes = $('#notes'); if (document.activeElement !== notes) notes.value = state.notes;
   const f = $('#settingsForm');
-  Object.entries(S).forEach(([k, v]) => { if (f.elements[k] && typeof v !== 'object') f.elements[k].value = v || (k === 'deficit' ? 0 : ''); });
-  Object.entries(S.modules).forEach(([m, on]) => { f.elements['m_' + m].checked = on; });
-  renderFavList();
+  Object.entries(S).forEach(([k, v]) => { if (f.elements[k] && typeof v !== 'object') f.elements[k].value = v; });
+  Object.entries(S.modules).forEach(([m, on]) => { if (f.elements['m_' + m]) f.elements['m_' + m].checked = on; });
 }
 $('#goals').addEventListener('click', e => {
   const b = e.target.closest('[data-goal]'); if (!b) return;
@@ -1067,9 +891,8 @@ $('#settingsForm').addEventListener('submit', e => {
   e.preventDefault();
   const f = new FormData(e.target), S = state.settings;
   S.startDate = f.get('startDate') || S.startDate;
-  ['weightStart', 'weightGoal', 'waterGoal', 'glass', 'rest', 'height', 'birthYear', 'stepsGoal'].forEach(k => { const v = parseFloat(f.get(k)); if (v > 0) S[k] = v; });
-  const def = parseFloat(f.get('deficit')); if (def >= 0) S.deficit = Math.min(1000, def);
-  S.theme = f.get('theme'); S.sex = f.get('sex');
+  ['weightStart', 'weightGoal', 'waterGoal', 'glass', 'rest', 'stepsGoal'].forEach(k => { const v = parseFloat(f.get(k)); if (v > 0) S[k] = v; });
+  S.theme = f.get('theme');
   Object.keys(S.modules).forEach(m => S.modules[m] = f.get('m_' + m) === 'on');
   applyTheme(); applyModules(); save(); viewPhase = null; toast('Réglages enregistrés.');
 });
@@ -1124,12 +947,6 @@ $('#recapBtn').onclick = async () => {
       const H = exoHistory(n).filter(h => h.date.startsWith(m));
       t += `- ${n} : ` + H.map(h => fmtShort(h.date) + ' ' + h.sets.map(s => (s.kg ? num(s.kg) + 'kg×' : '') + s.reps).join(', ')).join(' | ') + '\n';
     });
-  }
-  const foodDays = Object.keys(state.food).filter(k => k.startsWith(m) && state.food[k].length);
-  if (foodDays.length) {
-    const ens = foodDays.map(energyOn).filter(Boolean);
-    t += `Calories : ${num(foodDays.reduce((a, k) => a + eatenOn(k), 0) / foodDays.length, 0)} kcal mangées par jour en moyenne (${foodDays.length} jours notés)`;
-    t += ens.length ? `, dépense estimée ${num(ens.reduce((a, x) => a + x.total, 0) / ens.length, 0)} kcal\n` : '\n';
   }
   const stepDays = Object.entries(state.steps).filter(([k, v]) => k.startsWith(m) && v);
   if (stepDays.length) t += `Pas : ${num(stepDays.reduce((a, [, v]) => a + v, 0) / stepDays.length, 0)} par jour en moyenne, objectif atteint ${stepDays.filter(([, v]) => v >= state.settings.stepsGoal).length} jours\n`;

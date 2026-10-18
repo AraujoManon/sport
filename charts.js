@@ -155,6 +155,7 @@ const Charts = (() => {
     hit.addEventListener('pointerdown', show);
     hit.addEventListener('pointerleave', hide);
 
+    if (opts.table === false) return;
     const head = ['Date', ...series.map(s => s.name)];
     table(container, head, dates.map(dt => [shortDate(parse(dt)), ...series.map(s => {
       const p = s.points.find(q => q.date === dt); return p ? fmtNum(p.y, dec) + (unit ? ' ' + unit : '') : '—';

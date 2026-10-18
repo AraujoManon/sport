@@ -1,8 +1,7 @@
 # Mon cadre — v4
 
-Application de suivi personnelle : séances, poids, eau, calories, pas, tests, respiration, objectifs, alimentation.
+Application de suivi personnelle : séances, progression par exercice, poids, eau, pas, tests, respiration, objectifs.
 
-Les calories des repas sont estimées à partir de la table Ciqual 2020 de l'ANSES (Licence Ouverte Etalab), incluse dans `ciqual.json`.
 Fichiers statiques, sans dépendance, fonctionne hors ligne une fois ouverte.
 
 ## Essayer sur l'ordinateur

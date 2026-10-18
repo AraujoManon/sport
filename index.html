@@ -50,27 +50,6 @@
 
   <div class="today-session" id="todaySession"></div>
 
-  <section id="modKcal" data-module="kcal">
-    <h2 class="h2">Assiette <small id="kcalTxt"></small></h2>
-    <div class="card">
-      <div class="meter kcal" id="kcalMeter" role="progressbar" aria-label="Calories du jour"><i></i></div>
-      <p class="hint" id="kcalHint" style="margin:6px 0 12px"></p>
-      <form id="foodForm">
-        <div class="seg meals" id="mealSeg" style="margin:0 0 10px">
-          <button type="button" data-m="matin" aria-selected="false">Petit-déj</button>
-          <button type="button" data-m="midi" aria-selected="false">Déjeuner</button>
-          <button type="button" data-m="soir" aria-selected="false">Dîner</button>
-          <button type="button" data-m="snack" aria-selected="false">En-cas</button>
-        </div>
-        <label class="field" style="margin-bottom:10px"><span class="hint">Écris ou dicte avec le micro du clavier</span>
-          <textarea id="foodText" rows="2" placeholder="2 œufs, 1 tranche de pain complet, un café au lait"></textarea></label>
-        <button class="btn" type="submit">Estimer les calories</button>
-      </form>
-      <div class="chips" id="favChips" style="margin-top:12px"></div>
-      <div id="foodDay" style="margin-top:8px"></div>
-    </div>
-  </section>
-
   <section id="modPas" data-module="pas">
     <h2 class="h2">Pas <small id="stepsTxt"></small></h2>
     <div class="card">
@@ -87,8 +66,8 @@
   <div class="card water">
     <div class="glasses" id="glasses" aria-hidden="true"></div>
     <div class="water-btns">
-      <button class="round" id="waterMinus" aria-label="Retirer un verre">−</button>
-      <button class="round plus" id="waterPlus" aria-label="Ajouter un verre">+</button>
+      <button class="round" id="waterMinus" aria-label="Retirer 750 ml">−</button>
+      <button class="round plus" id="waterPlus" aria-label="Ajouter 750 ml">+</button>
     </div>
   </div>
   </section>
@@ -132,7 +111,6 @@
 <section class="screen" id="s-progres">
   <div class="seg" role="tablist" id="progSeg">
     <button role="tab" data-p="poids" aria-selected="true">Poids</button>
-    <button role="tab" data-p="kcal" aria-selected="false" data-module="kcal">Calories</button>
     <button role="tab" data-p="pas" aria-selected="false" data-module="pas">Pas</button>
     <button role="tab" data-p="exos" aria-selected="false">Exercices</button>
     <button role="tab" data-p="eau" aria-selected="false" data-module="eau">Eau</button>
@@ -154,24 +132,14 @@
     <div class="card" id="wList"></div>
   </div>
 
-  <div data-panel="kcal" hidden>
-    <div class="stats" id="kcalStats"></div>
-    <div class="card"><h3 style="font-size:1.05rem">Mangé et dépensé sur 14 jours</h3><div id="kcalChart"></div></div>
-    <h2 class="h2">Journal</h2>
-    <div class="card" id="kcalLog"></div>
-    <p class="hint" style="margin-top:8px">Estimations à partir de la table Ciqual (ANSES). Compte environ 15 à 20 % d'écart : fie-toi surtout à la tendance et à ta courbe de poids.</p>
-  </div>
-
   <div data-panel="pas" hidden>
     <div class="stats" id="pasStats"></div>
     <div class="card"><h3 style="font-size:1.05rem">Pas sur 14 jours</h3><div class="chart-legend"><span><i class="kd" style="background:var(--olive)"></i>Objectif atteint</span><span><i class="kd" style="background:color-mix(in srgb,var(--olive) 45%,transparent)"></i>En dessous</span></div><div id="pasChart"></div></div>
   </div>
 
   <div data-panel="exos" hidden>
-    <label class="field" style="margin-top:4px"><span>Exercice</span><select id="exoSelect"></select></label>
-    <div class="stats" id="exoStats"></div>
-    <div class="card"><h3 style="font-size:1.05rem">Charge maximale par séance</h3><div id="exoChart"></div></div>
-    <div class="card"><h3 style="font-size:1.05rem">Volume total par séance <small class="hint">(kg × répétitions)</small></h3><div id="exoVolChart"></div></div>
+    <p class="hint" style="margin-bottom:8px">Une courbe par exercice, à partir des séries cochées pendant tes séances.</p>
+    <div id="exoCards"></div>
     <h2 class="h2">Records</h2>
     <div class="card" id="records"></div>
   </div>
@@ -206,22 +174,8 @@
 
 <!-- ===================== BIEN-ÊTRE ===================== -->
 <section class="screen" id="s-bien">
-  <div class="seg" role="tablist" id="bienSeg">
-    <button role="tab" data-p="souffle" aria-selected="true" data-module="souffle">Respiration</button>
-    <button role="tab" data-p="assiette" aria-selected="false" data-module="courses">Alimentation</button>
-    <button role="tab" data-p="courses" aria-selected="false" data-module="courses">Courses</button>
-  </div>
-  <div data-panel="souffle"><p class="hint" style="margin-bottom:12px" id="breathStats"></p><div id="breathList"></div></div>
-  <div data-panel="assiette" hidden><p class="hint" style="margin-bottom:12px">Touche un aliment pour l'ajouter à ta liste de courses.</p><div id="foods"></div></div>
-  <div data-panel="courses" hidden>
-    <form class="quick-weight" id="addShop" style="margin-bottom:12px">
-      <input type="text" id="shopInput" placeholder="Ajouter un article" aria-label="Ajouter un article" autocomplete="off">
-      <button class="btn" type="submit">Ajouter</button>
-    </form>
-    <div class="card" id="shopList"></div>
-    <div class="btns"><button class="btn ghost small" id="shopClearDone">Retirer les articles cochés</button><button class="btn danger small" id="shopClear">Vider la liste</button></div>
-  </div>
-</section>
+  <div data-panel="souffle" style="margin-top:12px"><p class="hint" style="margin-bottom:12px" id="breathStats"></p><div id="breathList"></div></div>
+  </section>
 
 <!-- ===================== MOI ===================== -->
 <section class="screen" id="s-moi">
@@ -237,13 +191,7 @@
   <form class="card" id="settingsForm">
     <label class="field"><span>Début du programme</span><input type="date" name="startDate" required></label>
     <div class="btns">
-      <label class="field"><span>Sexe</span><select name="sex"><option value="">—</option><option value="f">Femme</option><option value="m">Homme</option></select></label>
-      <label class="field"><span>Taille (cm)</span><input type="number" inputmode="numeric" name="height" min="120" max="220"></label>
-      <label class="field"><span>Année de naissance</span><input type="number" inputmode="numeric" name="birthYear" min="1930" max="2015"></label>
-    </div>
-    <div class="btns">
       <label class="field"><span>Objectif de pas</span><input type="number" inputmode="numeric" step="500" name="stepsGoal"></label>
-      <label class="field"><span>Déficit visé (kcal/j)</span><input type="number" inputmode="numeric" step="50" name="deficit"></label>
     </div>
     <div class="btns">
       <label class="field"><span>Poids de départ (kg)</span><input type="number" step="0.1" inputmode="decimal" name="weightStart"></label>
@@ -251,7 +199,7 @@
     </div>
     <div class="btns">
       <label class="field"><span>Eau par jour (ml)</span><input type="number" step="50" inputmode="numeric" name="waterGoal"></label>
-      <label class="field"><span>Un verre (ml)</span><input type="number" step="50" inputmode="numeric" name="glass"></label>
+      <label class="field"><span>Un appui (ml)</span><input type="number" step="50" inputmode="numeric" name="glass"></label>
     </div>
     <div class="btns">
       <label class="field"><span>Repos entre séries (s)</span><input type="number" step="15" inputmode="numeric" name="rest"></label>
@@ -259,20 +207,14 @@
     </div>
     <fieldset class="modules">
       <legend>Ce que j'affiche</legend>
-      <label><input type="checkbox" name="m_kcal"> Calories</label>
       <label><input type="checkbox" name="m_pas"> Pas</label>
       <label><input type="checkbox" name="m_eau"> Eau</label>
       <label><input type="checkbox" name="m_souffle"> Respiration</label>
-      <label><input type="checkbox" name="m_courses"> Alimentation et courses</label>
       <label><input type="checkbox" name="m_tests"> Tests physiques</label>
     </fieldset>
     <button class="btn" type="submit">Enregistrer les réglages</button>
   </form>
 
-  <section data-module="kcal">
-    <h2 class="h2">Repas habituels</h2>
-    <div class="card" id="favList"></div>
-  </section>
 
   <h2 class="h2">Mes données</h2>
   <div class="card stack">
@@ -323,16 +265,6 @@
   </form>
 </dialog>
 
-<dialog id="dlgFood" closedby="any" aria-labelledby="foodTitle">
-  <form class="sheet" id="foodReview">
-    <h2 id="foodTitle">Ce que j'ai compris</h2>
-    <div id="foodItems"></div>
-    <p class="row between" style="margin-top:12px"><b>Total</b><b id="foodTotal"></b></p>
-    <label class="row" style="margin-top:12px;gap:10px"><input type="checkbox" id="favSave" style="width:20px;height:20px"> Enregistrer comme repas habituel</label>
-    <label class="field" id="favNameField" hidden style="margin-top:8px"><span>Nom du repas</span><input type="text" id="favName" placeholder="Mon petit-déj"></label>
-    <div class="btns"><button type="button" class="btn ghost" data-close>Annuler</button><button class="btn" type="submit">Ajouter au repas</button></div>
-  </form>
-</dialog>
 
 <dialog id="dlgBreath" aria-labelledby="brTitle">
   <div class="sheet" style="text-align:center">
@@ -368,7 +300,6 @@
 
 <script src="data.js"></script>
 <script src="charts.js"></script>
-<script src="nutrition.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

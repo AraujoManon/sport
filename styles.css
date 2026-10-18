@@ -224,18 +224,10 @@ details.day.is-today>summary .dname{color:var(--rose)}
 .breath-ball{width:150px;height:150px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--rose-soft),var(--rose));display:grid;place-items:center;color:var(--on-rose);font-family:var(--font-display);font-size:1.4rem;font-style:italic;transform:scale(.75);transition-property:transform;transition-timing-function:ease-in-out}
 .breath-ball.big{transform:scale(1.1)}
 
-/* ---------- Aliments ---------- */
-.food-cat h3{font-size:1.1rem}
-.food-cat .row{margin-bottom:10px}
-.pill-yes,.pill-mod,.pill-no{font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:99px}
-.pill-yes{background:var(--olive-soft);color:var(--ink)} .pill-mod{background:var(--sunk);color:var(--ink)} .pill-no{background:var(--rose-soft);color:var(--ink)}
-.chips{display:flex;flex-wrap:wrap;gap:6px}
-.chip{font-size:.85rem;padding:6px 11px;border-radius:99px;background:var(--sunk);color:var(--ink-2);min-height:34px}
-.chip[aria-pressed="true"]{background:var(--rose);color:var(--on-rose)}
+/* Cases à cocher */
 .check{width:26px;height:26px;border-radius:8px;box-shadow:inset 0 0 0 1.5px var(--muted);flex-shrink:0;display:grid;place-items:center}
 .check[aria-checked="true"]{background:var(--rose);box-shadow:none}
 .check[aria-checked="true"]::after{content:"";width:10px;height:6px;border-left:2px solid var(--on-rose);border-bottom:2px solid var(--on-rose);transform:rotate(-45deg) translate(1px,-1px)}
-.done-txt{text-decoration:line-through;color:var(--muted)}
 
 /* ---------- Objectifs ---------- */
 .goal{border-left:4px solid var(--rose)}
@@ -300,25 +292,17 @@ dialog.full{max-width:none;max-height:none;height:100dvh;border-radius:0;margin:
 /* ---------- Bandeau installation ---------- */
 .install{background:var(--eau-soft);border-radius:var(--radius-m);padding:14px 16px;margin-top:12px;display:flex;gap:12px;align-items:center}
 .install p{flex:1;font-size:.9rem}
-#sesTitle:focus{outline:none}
 
-/* ---------- Assiette, pas, modules ---------- */
+/* ---------- Modules, progression par exercice ---------- */
 .sw.none{background:transparent;box-shadow:inset 0 0 0 1.5px var(--muted)}
-.meter.kcal{margin-top:0}
-.meter.kcal.over i{background:var(--gold)}
-.meal-h{font-weight:600;font-size:.9rem;color:var(--ink-2);margin-top:12px}
-.food-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:.92rem}
-.food-row:last-child{border-bottom:0}
-.food-row .k{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--ink-2);white-space:nowrap}
-.fi{border-bottom:1px solid var(--line);padding:10px 0}
-.fi .src{font-size:.8rem;color:var(--muted)}
-.fi select{width:100%;min-height:42px;border-radius:10px;border:1.5px solid var(--line);background:var(--paper);padding:6px 8px;margin:6px 0}
-.fi .gr{display:flex;align-items:center;gap:8px}
-.fi .gr input{width:90px;min-height:40px;border-radius:10px;border:1.5px solid var(--line);background:var(--paper);padding:6px 10px}
-.fi .gr .k{margin-left:auto;font-weight:600;font-variant-numeric:tabular-nums}
-.fi.miss{color:var(--danger)}
 .modules{border:1.5px solid var(--line);border-radius:12px;padding:10px 14px 4px;margin:0 0 14px}
 .modules legend{font-size:.875rem;color:var(--ink-2);font-weight:500;padding:0 4px}
 .modules label{display:flex;align-items:center;gap:10px;min-height:40px}
 .modules input{width:20px;height:20px;accent-color:var(--rose)}
-.chip.fav{background:var(--rose-soft);color:var(--ink)}
+.glass.bottle{width:20px;height:40px;border-radius:9px 9px 6px 6px}
+.exo-group{font-size:1.05rem;color:var(--ink-2);margin:22px 0 10px;font-style:italic}
+.exo-card h3{font-size:1.1rem}
+.exo-card .hint{margin:4px 0 6px}
+.badge.up{background:var(--olive-soft)}
+.ses-prog{background:var(--paper);border-radius:12px;padding:10px 12px;margin:10px 0}
+#sesTitle:focus{outline:none}
