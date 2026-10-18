@@ -1,0 +1,1193 @@
+'use strict';
+/* =========================================================
+   Mon cadre — v4
+   Stockage : localStorage 'monCadre_v4' (migration auto depuis 'monCadre_v3').
+   ========================================================= */
+
+const STORE = 'monCadre_v4';
+const OLD_STORE = 'monCadre_v3';
+const DEFAULT_SETTINGS = {
+  startDate: '2026-07-07', weightStart: 86, weightGoal: 80,
+  waterGoal: 2000, glass: 250, rest: 90, theme: 'auto',
+  sex: '', height: 0, birthYear: 0, stepsGoal: 8000, deficit: 300,
+  modules: { kcal: true, pas: true, eau: true, souffle: true, courses: true, tests: true }
+};
+const blank = () => ({
+  version: 4, settings: { ...DEFAULT_SETTINGS },
+  weights: [], water: {}, sessions: [], exoLast: {}, tests: {},
+  breath: [], goalsDone: {}, shopping: [], notes: '', draft: null,
+  food: {}, steps: {}, favMeals: []
+});
+let state = blank();
+
+/* ---------- Outils ---------- */
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const pad2 = n => String(n).padStart(2, '0');
+const keyOf = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+const today = () => keyOf(new Date());
+const dateOf = k => new Date(k + 'T12:00:00');
+const addDays = (k, n) => { const d = dateOf(k); d.setDate(d.getDate() + n); return keyOf(d); };
+const fmtShort = k => dateOf(k).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+const fmtLong = k => dateOf(k).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+const num = Charts.fmtNum;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const stars = n => n ? '<span class="stars" aria-label="' + n + ' sur 5">' + '★'.repeat(n) + '</span>' : '';
+const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+
+/* ---------- Stockage + migration ---------- */
+// Retrouve la définition d'un exercice par son nom, toutes phases confondues.
+function exoDef(name) {
+  for (const ph of Object.values(PROGRAMS)) for (const d of Object.values(ph)) {
+    const e = d.exos.find(x => x.n === name); if (e) return e;
+  }
+  return null;
+}
+function migrateV3(o) {
+  const s = blank();
+  s.weights = (o.weights || []).filter(w => w && w.date && +w.value).map(w => ({ date: w.date, value: +w.value }));
+  s.tests = o.tests || {};
+  s.shopping = (o.shopping || []).map(x => ({ name: x.name, done: !!x.done }));
+  s.notes = o.userNotes || '';
+  s.goalsDone = o.goalsChecked || {};
+  s.breath = (o.breathLogs || []).map(b => ({ date: b.date, tech: b.techId, sec: b.durationSec || 0 }));
+  s.sessions = (o.sessionLogs || []).map(l => {
+    if (l.isFreeLog) return { id: uid(), date: l.date, free: true, type: l.type, note: l.alt || '', feel: l.feel || 0 };
+    const exos = {};
+    Object.entries(l.perfs || {}).forEach(([n, v]) => {
+      if (!Array.isArray(v)) return;
+      const def = exoDef(n);
+      exos[n] = { sets: v.map(x => ({ kg: +x.poids || 0, reps: +x.reps || 0 })), feel: (l.feels || {})[n] || 0, unit: def ? unitOf(def) : 'rép.', weighted: def ? isWeighted(def) : false };
+    });
+    return { id: uid(), date: l.date, type: l.type, label: l.label, kind: kindOf(l.type), feel: l.feel || 0, note: l.alt || '', exos };
+  });
+  Object.entries(o.exoStruct || {}).forEach(([n, arr]) => {
+    s.exoLast[n] = { sets: arr.map(x => ({ kg: +x.poids || 0, reps: +x.reps || 0 })), allOk: false };
+  });
+  return s;
+}
+function normalize(o) {
+  if (!o || typeof o !== 'object') return blank();
+  if (o.version !== 4) return migrateV3(o);
+  const s = { ...blank(), ...o };
+  s.settings = { ...DEFAULT_SETTINGS, ...(o.settings || {}) };
+  s.settings.modules = { ...DEFAULT_SETTINGS.modules, ...(o.settings?.modules || {}) };
+  return s;
+}
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE);
+    if (raw) { state = normalize(JSON.parse(raw)); return; }
+    const old = localStorage.getItem(OLD_STORE);
+    if (old) { state = migrateV3(JSON.parse(old)); save(); setTimeout(() => toast('Tes anciennes données ont été reprises.'), 600); }
+  } catch (e) { console.warn('Lecture impossible', e); }
+}
+function save() {
+  try { localStorage.setItem(STORE, JSON.stringify(state)); }
+  catch (e) { toast("Enregistrement impossible : le stockage du téléphone est plein ou bloqué."); }
+}
+// Demande au navigateur de ne pas effacer les données (utile sur iPhone).
+if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+
+/* ---------- Toast & confirmation ---------- */
+let toastTimer;
+function toast(msg, action) {
+  const t = $('#toast');
+  t.replaceChildren(document.createTextNode(msg));
+  if (action) {
+    const b = document.createElement('button');
+    b.textContent = action.label;
+    b.onclick = () => { action.run(); t.classList.remove('on'); };
+    t.appendChild(b);
+  }
+  t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), action ? 5000 : 2600);
+}
+function confirmDlg(title, text, yes) {
+  const d = $('#dlgConfirm');
+  $('#cfTitle').textContent = title;
+  $('#cfText').textContent = text;
+  $('#cfYes').textContent = yes;
+  d.returnValue = '';
+  d.showModal();
+  return new Promise(res => d.addEventListener('close', () => res(d.returnValue === 'yes'), { once: true }));
+}
+
+/* ---------- Programme & phases ---------- */
+function kindOf(type = '') {
+  const t = type.toLowerCase();
+  if (t.includes('repos')) return 'repos';
+  if (t.includes('course')) return 'course';
+  return 'force';
+}
+function phaseInfo(k = today()) {
+  const week = Math.floor((dateOf(k) - dateOf(state.settings.startDate)) / (7 * 864e5)) + 1;
+  const base = [
+    { num: 1, name: 'Reconditionnement', desc: 'Semaines 1 à 8 : bases, marche, mobilité, gainage doux.' },
+    { num: 2, name: 'Construction', desc: 'Semaines 9 à 16 : course progressive, charges qui montent.' },
+    { num: 3, name: 'Consolidation', desc: 'Semaines 17 à 24 : objectifs cibles, performance.' }
+  ];
+  const p = week <= 8 ? base[0] : week <= 16 ? base[1] : base[2];
+  return { ...p, week: Math.max(1, week), over: week > 24, before: week < 1 };
+}
+const programFor = (dayIdx, phase = phaseInfo().num) => PROGRAMS[phase][dayIdx];
+
+/* ---------- Classement des exercices (repris de la v3) ---------- */
+const isNoInput = e => /échauff|étirement|etirement|repos|retour calme|retour au calme|souplesse|activité libre/i.test(e.n);
+const isTime = e => /planche|gainage|équilibre|hollow|superman/i.test(e.n) || /\d+\s*[×x]\s*\d+\s*s\b/.test(e.s);
+const isWeighted = e => /rh0|rh1|rc0|hip thrust|leg curl|abducteur|squat barre|tirage|lombaires|abdos/i.test(e.n) && !/assist/i.test(e.n);
+const isAssisted = e => /assist/i.test(e.n);
+// Unité de mesure d'un exercice : secondes, minutes, cycles ou répétitions.
+function unitOf(e) {
+  if (isTime(e)) return 's';
+  if (/cycles/.test(e.s)) return 'cycles';
+  if (/\bmin\b/.test(e.s) && !/[×x]\s*\d/.test(e.s)) return 'min';
+  return 'rép.';
+}
+function specReps(e) {
+  const m = (e.s.match(/MIN\s+([^·]+)/) || [null, e.s])[1].match(/(\d+)\s*[×x]\s*(\d+)/);
+  return m ? +m[2] : 10;
+}
+function prettySpec(s) {
+  return esc(s).replace(/MIN ([^·]+?)( ·|$)/g, 'Minimum $1$2').replace(/MAX (.+)$/, ' maximum $1').replace(/ · /g, ', ');
+}
+
+/* =========================================================
+   NAVIGATION
+   ========================================================= */
+const TITLES = { today: "Aujourd'hui", seances: 'Séances', progres: 'Progrès', bien: 'Bien-être', moi: 'Moi' };
+let current = 'today';
+function go(name) {
+  current = name;
+  $$('.screen').forEach(s => s.classList.toggle('on', s.id === 's-' + name));
+  $$('.nav button').forEach(b => b.dataset.s === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
+  $('#screenTitle').textContent = TITLES[name];
+  window.scrollTo({ top: 0, behavior: 'instant' });
+  render();
+}
+$$('.nav button').forEach(b => b.addEventListener('click', () => go(b.dataset.s)));
+
+function segInit(id, onChange) {
+  const seg = $(id);
+  seg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    seg.querySelectorAll('button').forEach(x => x.setAttribute('aria-selected', x === b));
+    onChange(b);
+  });
+}
+function panelSwitch(screen, p) {
+  $$(`${screen} [data-panel]`).forEach(x => x.hidden = x.dataset.panel !== p);
+}
+let progTab = 'poids', bienTab = 'souffle';
+segInit('#progSeg', b => { progTab = b.dataset.p; panelSwitch('#s-progres', progTab); renderProgres(); });
+segInit('#bienSeg', b => { bienTab = b.dataset.p; panelSwitch('#s-bien', bienTab); renderBien(); });
+
+function render() {
+  $('#todayDate').textContent = fmtLong(today()).replace(/^./, c => c.toUpperCase());
+  ({ today: renderToday, seances: renderSeances, progres: renderProgres, bien: renderBien, moi: renderMoi })[current]();
+}
+
+/* =========================================================
+   AUJOURD'HUI
+   ========================================================= */
+function sessionsOn(k) { return state.sessions.filter(s => s.date === k); }
+function setArc(id, r, p) {
+  const c = 2 * Math.PI * r, a = $(id);
+  a.setAttribute('transform', 'rotate(-90 66 66)');
+  a.style.strokeDasharray = c;
+  a.style.strokeDashoffset = c * (1 - Math.max(0, Math.min(1, p)));
+}
+function renderToday() {
+  const k = today(), dow = new Date().getDay(), ph = phaseInfo();
+  const prog = programFor(dow), kind = kindOf(prog.type);
+  const done = sessionsOn(k);
+  const draft = state.draft && state.draft.date === k ? state.draft : null;
+  const ml = state.water[k] || 0, goal = state.settings.waterGoal;
+  const w = state.weights.find(x => x.date === k);
+
+  // Rosace
+  const sesP = done.length ? 1 : kind === 'repos' ? 1 : draft ? draft.step / draft.exos.length : 0;
+  const M = state.settings.modules, steps = state.steps[k] || 0;
+  setArc('#arcS', 58, sesP); setArc('#arcE', 44, M.eau ? ml / goal : 0);
+  setArc('#arcP', 30, M.pas ? steps / state.settings.stepsGoal : (w ? 1 : 0));
+  $('#lgS').textContent = done.length ? 'Faite' : kind === 'repos' ? 'Repos' : draft ? 'En cours' : 'À faire';
+  $('#lgE').textContent = num(ml / 1000, 2) + ' / ' + num(goal / 1000, 1) + ' L';
+  $('#lgE').closest('li').hidden = !M.eau;
+  $('#lgPname').textContent = M.pas ? 'Pas' : 'Pesée';
+  $('#lgP').textContent = M.pas ? (steps ? num(steps, 0) : 'À noter') : (w ? num(w.value) + ' kg' : 'À faire');
+  $('#lgWrow').hidden = !M.pas;
+  $('#lgW').textContent = w ? num(w.value) + ' kg' : 'À faire';
+  if (M.kcal) renderFoodCard();
+  if (M.pas) renderStepsCard();
+
+  // Séance du jour
+  const box = $('#todaySession');
+  const phaseTxt = ph.before ? 'Le programme commence le ' + fmtShort(state.settings.startDate)
+    : ph.over ? 'Programme terminé · semaine ' + ph.week : 'Semaine ' + ph.week + ', ' + ph.name.toLowerCase();
+  box.classList.toggle('done', !!done.length || kind === 'repos');
+  if (done.length) {
+    const s = done[0];
+    box.innerHTML = `<span class="phase">${esc(phaseTxt)}</span><h2>Séance faite</h2>
+      <p>${esc(s.free ? s.type : s.label)} ${stars(s.feel)}</p>
+      <button class="btn" data-act="free">Noter une autre activité</button>`;
+  } else if (kind === 'repos') {
+    box.innerHTML = `<span class="phase">${esc(phaseTxt)}</span><h2>${esc(prog.label)}</h2>
+      <p>${esc(prog.exos[0].d)}</p>
+      <button class="btn" data-act="free">Noter une activité</button>`;
+  } else {
+    const min = prog.exos.reduce((a, e) => a + (parseInt(e.s) && /min/.test(e.s) ? parseInt(e.s) : 0), 0);
+    box.innerHTML = `<span class="phase">${esc(phaseTxt)}</span><h2>${esc(prog.label)}</h2>
+      <p>${esc(prog.type)}, ${prog.exos.length} exercices${min ? ', dont ' + min + ' min de cardio' : ''}</p>
+      <button class="btn" data-act="start">${draft ? 'Reprendre ma séance' : 'Commencer la séance'}</button>`;
+  }
+
+  // Eau
+  const g = state.settings.glass, n = Math.max(Math.ceil(goal / g), Math.ceil(ml / g));
+  $('#glasses').innerHTML = Array.from({ length: n }, (_, i) => `<i class="glass${i < Math.round(ml / g) ? ' full' : ''}"></i>`).join('');
+  $('#waterTxt').textContent = ml >= goal ? 'objectif atteint' : 'encore ' + Math.ceil((goal - ml) / g) + ' verre' + ((goal - ml) / g > 1 ? 's' : '');
+
+  // Pesée
+  const prev = state.weights.filter(x => x.date < k).at(-1);
+  $('#qwInput').value = '';
+  $('#qwInput').placeholder = w ? 'Corriger : ' + num(w.value) + ' kg' : 'Poids du jour en kg';
+  $('#qwHint').textContent = w ? 'Noté aujourd\'hui : ' + num(w.value) + ' kg' + (prev ? ' (' + signed(w.value - prev.value) + ' kg depuis le ' + fmtShort(prev.date) + ')' : '')
+    : prev ? 'Dernière pesée : ' + num(prev.value) + ' kg le ' + fmtShort(prev.date) : 'Pèse-toi le matin, à jeun, pour comparer ce qui est comparable.';
+
+  // Respiration suggérée selon l'heure
+  const h = new Date().getHours();
+  const t = BREATH.find(b => b.id === (h < 11 ? 'cohere' : h >= 21 ? '478' : h >= 17 ? 'long-expire' : 'box'));
+  $('#breathSuggest').innerHTML = `<h3>${esc(t.name)}</h3><div class="tags">${t.tags.map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
+    <p class="hint">${esc(t.rhythm)}, ${Math.round(t.duration / 60)} min</p>`;
+  $('#breathSuggest').dataset.id = t.id;
+}
+const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '±') + num(Math.abs(v));
+
+$('#todaySession').addEventListener('click', e => {
+  const a = e.target.closest('[data-act]')?.dataset.act;
+  if (a === 'start') startSession();
+  if (a === 'free') openFree();
+});
+function addWater(sign) {
+  const k = today();
+  state.water[k] = Math.max(0, (state.water[k] || 0) + sign * state.settings.glass);
+  save(); renderToday();
+  if (sign > 0 && state.water[k] >= state.settings.waterGoal && state.water[k] - state.settings.glass < state.settings.waterGoal) toast('Objectif d\'eau atteint pour aujourd\'hui.');
+}
+$('#waterPlus').onclick = () => addWater(1);
+$('#waterMinus').onclick = () => addWater(-1);
+$('#quickWeight').addEventListener('submit', e => {
+  e.preventDefault();
+  const v = parseFloat($('#qwInput').value.replace(',', '.'));
+  if (!(v > 30 && v < 250)) { toast('Entre un poids entre 30 et 250 kg.'); return; }
+  setWeight(today(), v);
+  $('#qwInput').blur();
+  toast('Pesée notée : ' + num(v) + ' kg');
+});
+function setWeight(k, v) {
+  state.weights = state.weights.filter(w => w.date !== k);
+  state.weights.push({ date: k, value: Math.round(v * 10) / 10 });
+  state.weights.sort((a, b) => a.date.localeCompare(b.date));
+  save(); render();
+}
+$('#breathSuggest').onclick = e => startBreath(e.currentTarget.dataset.id);
+
+/* =========================================================
+   SÉANCE GUIDÉE
+   ========================================================= */
+function buildSets(e) {
+  const last = state.exoLast[e.n];
+  if (last?.sets?.length) return last.sets.map(s => ({ kg: s.kg, reps: s.reps, ok: false }));
+  const u = unitOf(e);
+  if (u === 'min' || u === 'cycles') {
+    const v = parseInt((e.s.match(/MIN\s+(\d+)/) || e.s.match(/(\d+)/) || [])[1]) || 0;
+    return [{ kg: 0, reps: v, ok: false }];
+  }
+  const reps = u === 's' ? (parseInt((e.s.match(/(\d+)\s*s/) || [])[1]) || 30) : specReps(e);
+  return Array.from({ length: 3 }, () => ({ kg: 0, reps, ok: false }));
+}
+async function startSession() {
+  const k = today();
+  if (state.draft && state.draft.date !== k) {
+    const resume = await confirmDlg('Séance non terminée', `Ta séance du ${fmtShort(state.draft.date)} n'a pas été terminée. La reprendre pour l'enregistrer ?`, 'Reprendre');
+    if (!resume) { state.draft = null; save(); }
+  }
+  if (!state.draft) {
+    const dow = new Date().getDay(), prog = programFor(dow);
+    if (kindOf(prog.type) === 'repos') { toast('Jour de repos : note plutôt ce que tu as fait.'); openFree(); return; }
+    state.draft = {
+      date: k, type: prog.type, label: prog.label, kind: kindOf(prog.type), phase: phaseInfo().num,
+      exos: prog.exos, step: 0, sets: {}, feels: {}, feel: 0, note: '', startedAt: Date.now()
+    };
+    prog.exos.forEach(e => { if (!isNoInput(e)) state.draft.sets[e.n] = buildSets(e); });
+    save();
+  }
+  $('#sesTitle').textContent = state.draft.label;
+  $('#dlgSession').showModal();
+  renderStep();
+}
+$('#sesClose').onclick = () => {
+  stopRest();
+  $('#dlgSession').close();
+  render();
+  if (state.draft) toast('Séance gardée : tu pourras la reprendre.');
+};
+$('#dlgSession').addEventListener('cancel', () => { stopRest(); setTimeout(render); });
+
+function suggestion(e) {
+  const last = state.exoLast[e.n];
+  if (!last?.allOk || !isWeighted(e) || !last.sets.length) return null;
+  const top = Math.max(...last.sets.map(s => s.kg));
+  if (!top) return null;
+  return { from: top, to: top + 2.5 };
+}
+function renderStep() {
+  const d = state.draft, total = d.exos.length;
+  $('#sesBar').style.width = (d.step / total * 100) + '%';
+  if (d.step >= total) return renderRecap();
+  $('#sesCount').textContent = 'Exercice ' + (d.step + 1) + ' sur ' + total;
+  const e = d.exos[d.step], sets = d.sets[e.n];
+  const weighted = isWeighted(e), unit = unitOf(e), assisted = isAssisted(e);
+  const sug = sets && suggestion(e);
+  let html = `<div class="ses-card"><h3>${esc(e.n)}</h3><p class="spec">${prettySpec(e.s)}</p>`;
+  if (e.d) html += `<div class="tip">${esc(e.d)}</div>`;
+  if (e.t) html += `<div class="tip${/PALIER/.test(e.t) ? ' palier' : ''}">${esc(e.t)}</div>`;
+  if (sug) html += `<div class="suggest"><span class="grow">La dernière fois, toutes tes séries étaient réussies. Essaie <b>${num(sug.to)} kg</b>.</span><button class="btn small soft" data-act="sug">Appliquer</button></div>`;
+  if (!sets) {
+    html += `<p class="hint" style="text-align:center;margin:16px 0 4px">Rien à noter ici : appuie sur « Terminé » quand c'est fait.</p>`;
+  } else {
+    html += `<p class="hint" style="margin-top:14px">Coche chaque série réussie : c'est ce qui est enregistré.</p><div style="margin-top:8px">`;
+    sets.forEach((s, i) => {
+      html += `<div class="set${s.ok ? ' ok' : ''}"><span class="n">${i + 1}</span>`;
+      if (weighted || assisted) html += stepper(i, 'kg', s.kg, assisted ? 'kg aide' : 'kg');
+      html += stepper(i, 'reps', s.reps, unit);
+      html += `<button class="check" role="checkbox" aria-checked="${s.ok}" aria-label="Série ${i + 1} réussie" data-ok="${i}"></button></div>`;
+    });
+    html += `<div class="btns"><button class="btn small ghost" data-act="add">Ajouter une série</button>${sets.length > 1 ? '<button class="btn small ghost" data-act="rm">Retirer la dernière</button>' : ''}</div></div>`;
+    html += `<p class="hint" style="text-align:center;margin-top:14px">Ressenti sur cet exercice</p><div class="feel" data-feel="exo">${feelBtns(d.feels[e.n])}</div>`;
+  }
+  html += `<button class="btn" data-act="next" style="margin-top:12px">Terminé, exercice suivant</button>
+    <div class="btns" style="margin-top:8px">${d.step ? '<button class="btn ghost" data-act="prev">Précédent</button>' : ''}<button class="btn ghost" data-act="skip">Passer</button></div>
+    </div><div id="restBar"></div>`;
+  $('#sesBody').innerHTML = html;
+  paintRest();
+}
+const stepper = (i, f, v, u) => `<div class="stepper"><button data-adj="${i}|${f}|-1" aria-label="Moins">−</button><output>${num(v)}</output><span class="u">${u}</span><button data-adj="${i}|${f}|1" aria-label="Plus">+</button></div>`;
+const feelBtns = v => [1, 2, 3, 4, 5].map(n => `<button aria-pressed="${n <= (v || 0)}" data-f="${n}" aria-label="${n} sur 5">★</button>`).join('');
+
+$('#sesBody').addEventListener('click', async ev => {
+  const d = state.draft; if (!d) return;
+  const e = d.exos[d.step], sets = e && d.sets[e.n];
+  const t = ev.target.closest('button'); if (!t) return;
+  if (t.dataset.adj) {
+    const [i, f, dir] = t.dataset.adj.split('|');
+    const step = f === 'kg' ? 2.5 : unitOf(e) === 's' ? 5 : 1;
+    sets[i][f] = Math.max(0, Math.round((sets[i][f] + step * dir) * 10) / 10);
+    t.parentNode.querySelector('output').textContent = num(sets[i][f]);
+    save(); return;
+  }
+  if (t.dataset.ok !== undefined) {
+    const s = sets[t.dataset.ok]; s.ok = !s.ok; save();
+    t.setAttribute('aria-checked', s.ok); t.closest('.set').classList.toggle('ok', s.ok);
+    if (s.ok && sets.some(x => !x.ok)) startRest();
+    return;
+  }
+  if (t.dataset.f) {
+    const box = t.parentNode, v = +t.dataset.f;
+    if (box.dataset.feel === 'exo') d.feels[e.n] = v; else d.feel = v;
+    box.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.f <= v));
+    save(); return;
+  }
+  const act = t.dataset.act;
+  if (act === 'sug') { const s = suggestion(e); sets.forEach(x => x.kg = s.to); save(); renderStep(); }
+  if (act === 'add') { const l = sets.at(-1); sets.push({ kg: l.kg, reps: l.reps, ok: false }); save(); renderStep(); }
+  if (act === 'rm') { sets.pop(); save(); renderStep(); }
+  if (act === 'next') { d.step++; stopRest(); save(); renderStep(); $('#dlgSession').scrollTo(0, 0); }
+  if (act === 'prev') { d.step--; save(); renderStep(); }
+  if (act === 'skip') { if (sets) d.sets[e.n] = sets.map(x => ({ ...x, ok: false, skipped: true })); d.step++; stopRest(); save(); renderStep(); }
+  if (act === 'finish') finishSession();
+  if (act === 'abandon') {
+    if (await confirmDlg('Abandonner la séance ?', 'Ce que tu as noté pendant cette séance sera effacé.', 'Abandonner')) {
+      state.draft = null; save(); $('#dlgSession').close(); render(); toast('Séance abandonnée.');
+    }
+  }
+  if (act === 'rest+') { restEnd += 15000; paintRest(); }
+  if (act === 'rest0') stopRest();
+});
+
+/* Minuteur de repos */
+let restEnd = 0, restTick = null;
+function startRest() {
+  restEnd = Date.now() + state.settings.rest * 1000;
+  clearInterval(restTick);
+  restTick = setInterval(paintRest, 250);
+  paintRest();
+}
+function stopRest() { clearInterval(restTick); restTick = null; restEnd = 0; paintRest(); }
+function paintRest() {
+  const bar = $('#restBar'); if (!bar) return;
+  const left = Math.ceil((restEnd - Date.now()) / 1000);
+  if (!restEnd || left <= 0) {
+    if (restEnd && left <= 0) { navigator.vibrate?.([200, 100, 200]); toast('Repos terminé : série suivante.'); restEnd = 0; clearInterval(restTick); }
+    bar.innerHTML = ''; return;
+  }
+  bar.innerHTML = `<div class="rest"><span class="grow">Repos</span><span class="t">${Math.floor(left / 60)}:${pad2(left % 60)}</span><button data-act="rest+">+15 s</button><button data-act="rest0">Passer</button></div>`;
+}
+
+function renderRecap() {
+  const d = state.draft;
+  $('#sesCount').textContent = 'Dernière étape';
+  const n = Object.values(d.sets).filter(s => s.some(x => x.ok && !x.skipped)).length;
+  $('#sesBody').innerHTML = `<div class="ses-card"><h3>Séance terminée</h3>
+    <p class="hint" style="text-align:center;margin:6px 0 10px">${n} exercice${n > 1 ? 's' : ''} avec des séries cochées.</p>
+    <p style="text-align:center">Comment tu te sens ?</p>
+    <div class="feel" data-feel="ses">${feelBtns(d.feel)}</div>
+    <label class="field"><span>Une note sur cette séance (facultatif)</span><textarea id="sesNote" placeholder="J'ai remplacé la course par 1 h de marche…">${esc(d.note)}</textarea></label>
+    <button class="btn" data-act="finish">Enregistrer la séance</button>
+    <div class="btns" style="margin-top:8px"><button class="btn ghost" data-act="prev">Revenir</button><button class="btn danger" data-act="abandon">Abandonner</button></div></div>`;
+  $('#sesNote').addEventListener('input', ev => { d.note = ev.target.value; save(); });
+}
+function finishSession() {
+  const d = state.draft;
+  if (!d.feel) { toast('Donne une note de ressenti avant d\'enregistrer.'); return; }
+  const exos = {};
+  d.exos.forEach(e => {
+    const sets = d.sets[e.n];
+    if (!sets) return;
+    // Seules les séries cochées comptent comme faites.
+    const okSets = sets.filter(s => s.ok && !s.skipped);
+    if (!okSets.length) return;
+    exos[e.n] = { sets: okSets.map(s => ({ kg: s.kg, reps: s.reps })), feel: d.feels[e.n] || 0, unit: unitOf(e), weighted: isWeighted(e) };
+    // On garde toutes les séries prévues pour pré-remplir la prochaine fois.
+    state.exoLast[e.n] = { sets: sets.map(s => ({ kg: s.kg, reps: s.reps })), allOk: sets.every(s => s.ok), date: d.date };
+  });
+  const min = d.startedAt ? Math.min(150, Math.max(15, Math.round((Date.now() - d.startedAt) / 60000))) : 0;
+  state.sessions.push({ id: uid(), date: d.date, type: d.type, label: d.label, kind: d.kind, phase: d.phase, feel: d.feel, note: d.note.trim(), exos, min });
+  state.draft = null;
+  save(); stopRest();
+  $('#dlgSession').close();
+  render();
+  toast('Séance enregistrée. Bravo.');
+}
+
+/* ---------- Activité libre ---------- */
+let freeFeel = 0;
+function openFree() {
+  const f = $('#freeForm'); f.reset(); freeFeel = 0;
+  $('#freeFeel').innerHTML = feelBtns(0);
+  $('#dlgFree').showModal();
+}
+$('#freeFeel').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  freeFeel = +b.dataset.f;
+  $$('#freeFeel button').forEach(x => x.setAttribute('aria-pressed', +x.dataset.f <= freeFeel));
+});
+$('#freeForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const note = f.get('note').trim(), min = +f.get('min') || 0;
+  if (!note && !min) { toast('Indique au moins une durée ou ce que tu as fait.'); return; }
+  state.sessions.push({ id: uid(), date: today(), free: true, type: f.get('type'), min, note, feel: freeFeel });
+  save(); $('#dlgFree').close(); render(); toast('Activité enregistrée.');
+});
+
+/* =========================================================
+   SÉANCES (programme + historique)
+   ========================================================= */
+let viewPhase = null;
+function renderSeances() {
+  const ph = phaseInfo();
+  if (!viewPhase) viewPhase = ph.num;
+  $('#phaseSeg').innerHTML = [1, 2, 3].map(n => `<button role="tab" data-n="${n}" aria-selected="${n === viewPhase}">Phase ${n}${n === ph.num ? ' (actuelle)' : ''}</button>`).join('');
+  const info = [null, 'Reconditionnement', 'Construction', 'Consolidation'][viewPhase];
+  $('#phaseDesc').textContent = info + (viewPhase === ph.num ? ` : tu es en semaine ${ph.week}${ph.over ? ', le programme de 24 semaines est terminé. Tu peux le relancer en changeant la date de début dans Moi.' : '.'}` : '.');
+  const dow = new Date().getDay();
+  const prog = programFor(dow);
+  const draft = state.draft && state.draft.date === today();
+  $('#startBtn').textContent = kindOf(prog.type) === 'repos' ? 'Jour de repos : noter une activité' : draft ? 'Reprendre ma séance' : 'Commencer la séance du jour';
+  $('#program').innerHTML = [1, 2, 3, 4, 5, 6, 0].map(i => {
+    const p = PROGRAMS[viewPhase][i], isT = i === dow && viewPhase === ph.num;
+    return `<details class="day${isT ? ' is-today' : ''}" data-kind="${kindOf(p.type)}"${isT ? ' open' : ''}>
+      <summary><span class="dname">${p.name.slice(0, 3)}</span><div class="grow"><h3>${esc(p.label)}</h3><span class="hint">${esc(p.type)}${isT ? ' · aujourd\'hui' : ''}</span></div>
+      <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></summary>
+      ${p.exos.map(e => `<div class="exo"><div class="row between"><b>${esc(e.n)}</b><span class="spec">${prettySpec(e.s)}</span></div>
+        ${e.d ? `<p class="desc">${esc(e.d)}</p>` : ''}${e.t ? `<div class="tip${/PALIER/.test(e.t) ? ' palier' : ''}">${esc(e.t)}</div>` : ''}</div>`).join('')}
+    </details>`;
+  }).join('');
+
+  const hist = state.sessions.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30);
+  $('#history').innerHTML = hist.length ? hist.map(s => `<div class="list-row"><span class="date">${fmtShort(s.date)}</span>
+    <div class="grow"><div>${esc(s.free ? s.type : s.label)}${s.min ? ', ' + s.min + ' min' : ''} ${stars(s.feel)}</div>
+    ${s.note ? `<div class="hint">${esc(s.note)}</div>` : ''}${!s.free && s.exos ? `<div class="hint">${Object.keys(s.exos).length} exercices notés</div>` : ''}</div>
+    <button class="del" data-del="${s.id}" aria-label="Supprimer">${ICON_X}</button></div>`).join('')
+    : '<p class="empty">Ta première séance apparaîtra ici.</p>';
+}
+$('#phaseSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { viewPhase = +b.dataset.n; renderSeances(); } });
+$('#startBtn').onclick = () => startSession();
+$('#freeBtn').onclick = () => openFree();
+$('#history').addEventListener('click', async e => {
+  const id = e.target.closest('[data-del]')?.dataset.del; if (!id) return;
+  if (!await confirmDlg('Supprimer cette séance ?', 'Elle disparaîtra de ton historique et de tes graphiques.', 'Supprimer')) return;
+  state.sessions = state.sessions.filter(s => s.id !== id); save(); renderSeances(); toast('Séance supprimée.');
+});
+
+/* =========================================================
+   PROGRÈS
+   ========================================================= */
+const COLORS = () => {
+  const cs = getComputedStyle(document.documentElement);
+  return { rose: cs.getPropertyValue('--rose').trim(), eau: cs.getPropertyValue('--eau').trim(), olive: cs.getPropertyValue('--olive').trim(), muted: cs.getPropertyValue('--muted').trim() };
+};
+let wRange = 30;
+segInit('#wRange', b => { wRange = +b.dataset.r; renderPoids(); });
+
+function rolling(list, days = 7) {
+  return list.map(w => {
+    const from = addDays(w.date, -(days - 1));
+    const win = list.filter(x => x.date >= from && x.date <= w.date);
+    return { date: w.date, y: win.reduce((a, x) => a + x.value, 0) / win.length };
+  });
+}
+function renderProgres() {
+  ({ poids: renderPoids, kcal: renderKcal, pas: renderPas, exos: renderExos, eau: renderEau, tests: renderTests, regul: renderRegul })[progTab]();
+}
+function stat(label, value, unit = '', delta = '', cls = '') {
+  return `<div class="stat"><div class="l">${label}</div><div class="n">${value}${unit ? `<small>${unit}</small>` : ''}</div>${delta ? `<div class="d ${cls}">${delta}</div>` : ''}</div>`;
+}
+function renderPoids() {
+  const W = state.weights, S = state.settings, C = COLORS();
+  const last = W.at(-1);
+  const avg = rolling(W);
+  const month = W.filter(w => w.date >= addDays(today(), -30));
+  const d30 = month.length >= 2 ? month.at(-1).value - month[0].value : null;
+  $('#wStats').innerHTML = W.length ? [
+    stat('Dernière pesée', num(last.value), 'kg', fmtShort(last.date)),
+    stat('Moyenne 7 jours', num(avg.at(-1).y), 'kg', 'lisse les variations'),
+    stat('Sur 30 jours', d30 === null ? '—' : signed(d30), d30 === null ? '' : 'kg', d30 === null ? 'il faut 2 pesées' : d30 < 0 ? 'en baisse' : d30 > 0 ? 'en hausse' : 'stable', d30 < 0 ? 'good' : d30 > 0 ? 'bad' : ''),
+    stat('Reste à perdre', num(Math.max(0, last.value - S.weightGoal)), 'kg', 'objectif ' + num(S.weightGoal) + ' kg')
+  ].join('') : '';
+  const from = wRange ? addDays(today(), -wRange) : '0000';
+  Charts.line($('#wChart'), {
+    title: 'Évolution du poids', unit: 'kg', goal: { y: S.weightGoal, label: 'objectif' },
+    empty: 'Note au moins deux pesées pour voir ta courbe.',
+    series: [
+      { name: 'Pesée', color: C.muted, line: false, dots: true, endLabel: false, points: W.filter(w => w.date >= from).map(w => ({ date: w.date, y: w.value })) },
+      { name: 'Moyenne 7 jours', color: C.rose, area: true, points: avg.filter(w => w.date >= from) }
+    ]
+  });
+  $('#wList').innerHTML = W.length ? W.slice().reverse().slice(0, 60).map((w, i, arr) => {
+    const prev = arr[i + 1];
+    return `<div class="list-row"><span class="date">${fmtShort(w.date)}</span><span class="val grow">${num(w.value)} kg</span>
+      ${prev ? `<span class="hint">${signed(w.value - prev.value)}</span>` : ''}<button class="del" data-wdel="${w.date}" aria-label="Supprimer la pesée du ${fmtShort(w.date)}">${ICON_X}</button></div>`;
+  }).join('') : '<p class="empty">Aucune pesée pour l\'instant. Tu peux en noter une sur l\'écran Aujourd\'hui.</p>';
+}
+$('#wList').addEventListener('click', e => {
+  const k = e.target.closest('[data-wdel]')?.dataset.wdel; if (!k) return;
+  const old = state.weights.find(w => w.date === k);
+  state.weights = state.weights.filter(w => w.date !== k); save(); renderPoids();
+  toast('Pesée supprimée.', { label: 'Annuler', run: () => setWeight(old.date, old.value) });
+});
+
+function exoHistory(name) {
+  return state.sessions.filter(s => s.exos?.[name]).sort((a, b) => a.date.localeCompare(b.date)).map(s => ({ date: s.date, ...s.exos[name] }));
+}
+let exoSel = null;
+function renderExos() {
+  const names = [...new Set(state.sessions.flatMap(s => Object.keys(s.exos || {})))].sort((a, b) => a.localeCompare(b, 'fr'));
+  const sel = $('#exoSelect');
+  if (!names.length) {
+    sel.innerHTML = '<option>Aucun exercice noté</option>';
+    ['#exoStats', '#exoChart', '#exoVolChart'].forEach(id => $(id).innerHTML = '');
+    $('#exoChart').innerHTML = '<p class="empty">Fais une séance guidée : chaque série notée viendra nourrir ces courbes.</p>';
+  } else {
+    if (!names.includes(exoSel)) exoSel = names[0];
+    sel.innerHTML = names.map(n => `<option${n === exoSel ? ' selected' : ''}>${esc(n)}</option>`).join('');
+    const H = exoHistory(exoSel), C = COLORS();
+    const weighted = H.some(h => h.sets.some(s => s.kg > 0));
+    const def = exoDef(exoSel);
+    const unit = H.at(-1).unit || (def ? unitOf(def) : 'rép.');
+    const time = unit !== 'rép.';
+    const maxPts = H.map(h => ({ date: h.date, y: weighted ? Math.max(...h.sets.map(s => s.kg)) : Math.max(...h.sets.map(s => s.reps)) }));
+    const volPts = H.map(h => ({ date: h.date, y: h.sets.reduce((a, s) => a + (weighted ? s.kg * s.reps : s.reps), 0) }));
+    const best = Math.max(...maxPts.map(p => p.y));
+    const first = maxPts[0].y, lastV = maxPts.at(-1).y;
+    $('#exoStats').innerHTML = [
+      stat(weighted ? 'Charge max récente' : 'Meilleure série récente', num(lastV), weighted ? 'kg' : unit, fmtShort(H.at(-1).date)),
+      stat('Record', num(best), weighted ? 'kg' : unit),
+      stat('Progression', signed(lastV - first), weighted ? 'kg' : unit, 'depuis le ' + fmtShort(H[0].date), lastV > first ? 'good' : ''),
+      stat('Séances', H.length)
+    ].join('');
+    $('#exoChart').previousElementSibling.textContent = weighted ? 'Charge maximale par séance' : ({ s: 'Meilleure tenue par séance', min: 'Durée par séance', cycles: 'Cycles par séance' }[unit] || 'Meilleure série par séance');
+    $('#exoVolChart').previousElementSibling.innerHTML = weighted ? 'Volume total par séance <small class="hint">(kg × répétitions)</small>' : 'Total par séance';
+    Charts.line($('#exoChart'), { title: exoSel, unit: weighted ? 'kg' : unit, series: [{ name: exoSel, color: C.rose, area: true, points: maxPts }], empty: 'Encore une séance de cet exercice et la courbe apparaîtra.' });
+    Charts.line($('#exoVolChart'), { title: 'Volume ' + exoSel, unit: weighted ? 'kg' : unit, decimals: 0, series: [{ name: 'Volume', color: C.olive, points: volPts }], empty: 'Encore une séance de cet exercice et la courbe apparaîtra.' });
+  }
+  // Records
+  const rows = [];
+  if (state.weights.length) rows.push(['Poids le plus bas', num(Math.min(...state.weights.map(w => w.value))) + ' kg']);
+  names.forEach(n => {
+    const H = exoHistory(n), w = H.some(h => h.sets.some(s => s.kg > 0));
+    if (!w) return;
+    rows.push([n, num(Math.max(...H.flatMap(h => h.sets.map(s => s.kg)))) + ' kg']);
+  });
+  TESTS.forEach(t => {
+    const L = state.tests[t.id]; if (!L?.length) return;
+    const v = L.map(x => x.value);
+    rows.push([t.name, num(t.inverse ? Math.min(...v) : Math.max(...v)) + ' ' + t.unit]);
+  });
+  $('#records').innerHTML = rows.length ? rows.map(r => `<div class="list-row"><span class="grow">${esc(r[0])}</span><span class="val">${esc(r[1])}</span></div>`).join('') : '<p class="empty">Tes records se rempliront tout seuls au fil des séances.</p>';
+}
+$('#exoSelect').addEventListener('change', e => { exoSel = e.target.value; renderExos(); });
+
+function renderEau() {
+  const goal = state.settings.waterGoal, C = COLORS();
+  const days = Array.from({ length: 14 }, (_, i) => addDays(today(), i - 13));
+  const last7 = days.slice(7).map(k => state.water[k] || 0);
+  const hit30 = Array.from({ length: 30 }, (_, i) => addDays(today(), -i)).filter(k => (state.water[k] || 0) >= goal).length;
+  $('#eauStats').innerHTML = [
+    stat("Aujourd'hui", num((state.water[today()] || 0) / 1000, 2), 'L'),
+    stat('Moyenne 7 jours', num(last7.reduce((a, b) => a + b, 0) / 7 / 1000, 2), 'L'),
+    stat('Objectif atteint', hit30, 'j', 'sur les 30 derniers jours')
+  ].join('');
+  Charts.bars($('#eauChart'), {
+    color: C.eau, unit: 'L', decimals: 2, goal: { y: goal / 1000, label: 'objectif' }, labelHead: 'Jour', valueHead: 'Eau',
+    empty: "Ajoute des verres sur l'écran Aujourd'hui pour voir ton historique.",
+    bars: days.map(k => ({ label: dateOf(k).getDate() + '', tipLabel: fmtShort(k), value: (state.water[k] || 0) / 1000, full: (state.water[k] || 0) >= goal }))
+  });
+}
+
+function renderTests() {
+  const C = COLORS();
+  $('#testsList').innerHTML = TESTS.map(t => {
+    const L = state.tests[t.id] || [], last = L.at(-1);
+    const due = !last || (dateOf(today()) - dateOf(last.date)) / 864e5 >= t.freq;
+    return `<div class="card"><div class="row between"><h3 style="font-size:1.1rem">${esc(t.name)}</h3>
+      <span class="badge" style="${due ? '' : 'background:var(--olive-soft)'}">${due ? 'À faire' : 'Fait le ' + fmtShort(last.date)}</span></div>
+      <p class="hint" style="margin:4px 0 8px">${esc(t.desc)} Départ : ${esc(t.baseline)}. Objectif : ${esc(t.goal)}. Tous les ${t.freq} jours.</p>
+      ${last ? `<p>Dernière mesure : <b>${num(last.value)} ${esc(t.unit)}</b></p>` : ''}
+      <div id="tc-${t.id}"></div>
+      <form class="quick-weight" data-test="${t.id}" style="margin-top:10px"><input type="number" step="0.5" inputmode="decimal" placeholder="Nouvelle mesure (${esc(t.unit)})" aria-label="Nouvelle mesure pour ${esc(t.name)}"><button class="btn small" type="submit">Noter</button></form></div>`;
+  }).join('');
+  TESTS.forEach(t => {
+    const L = state.tests[t.id] || [];
+    if (L.length >= 2) Charts.line($('#tc-' + t.id), { title: t.name, unit: t.unit, height: 140, series: [{ name: t.name, color: C.rose, dots: true, points: L.map(x => ({ date: x.date, y: x.value })) }] });
+  });
+}
+$('#testsList').addEventListener('submit', e => {
+  e.preventDefault();
+  const id = e.target.dataset.test, v = parseFloat(e.target.querySelector('input').value.replace(',', '.'));
+  if (isNaN(v)) { toast('Entre une valeur.'); return; }
+  (state.tests[id] ||= []).push({ date: today(), value: v });
+  save(); renderTests(); toast('Mesure notée.');
+});
+
+let calOffset = 0;
+function weekStart(k) { const d = dateOf(k), w = (d.getDay() + 6) % 7; return addDays(k, -w); }
+function renderRegul() {
+  const C = COLORS();
+  const ws = weekStart(today());
+  const planned = [1, 2, 3, 4, 5, 6, 0].filter(i => kindOf(programFor(i).type) !== 'repos').length;
+  const thisWeek = state.sessions.filter(s => s.date >= ws).length;
+  const monthKey = today().slice(0, 7);
+  const thisMonth = state.sessions.filter(s => s.date.startsWith(monthKey)).length;
+  let streak = 0;
+  for (let i = 1; i < 60; i++) {
+    const a = addDays(ws, -7 * i), b = addDays(a, 6);
+    if (state.sessions.filter(s => s.date >= a && s.date <= b).length >= 3) streak++; else break;
+  }
+  $('#regStats').innerHTML = [
+    stat('Cette semaine', thisWeek + ' / ' + planned, '', 'séances prévues'),
+    stat('Ce mois-ci', thisMonth, '', 'séances et activités'),
+    stat('Semaines tenues', streak, '', 'd\'affilée avec 3 séances ou plus')
+  ].join('');
+  const weeks = Array.from({ length: 10 }, (_, i) => addDays(ws, -7 * (9 - i)));
+  Charts.bars($('#regChart'), {
+    color: C.rose, unit: 'séances', goal: { y: 3, label: 'repère' }, labelHead: 'Semaine du', valueHead: 'Séances',
+    empty: 'Tes semaines apparaîtront ici dès la première séance.',
+    bars: weeks.map(a => ({ label: fmtShort(a), tipLabel: 'Semaine du ' + fmtShort(a), value: state.sessions.filter(s => s.date >= a && s.date <= addDays(a, 6)).length }))
+  });
+  // Calendrier
+  const base = new Date(); base.setDate(1); base.setMonth(base.getMonth() + calOffset);
+  const y = base.getFullYear(), m = base.getMonth();
+  $('#calTitle').textContent = base.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  const first = (new Date(y, m, 1).getDay() + 6) % 7, n = new Date(y, m + 1, 0).getDate();
+  let html = ['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(d => `<span class="h">${d}</span>`).join('');
+  html += '<span class="c x"></span>'.repeat(first);
+  for (let d = 1; d <= n; d++) {
+    const k = keyOf(new Date(y, m, d));
+    const cls = ['c', sessionsOn(k).length ? 's' : '', (state.water[k] || 0) >= state.settings.waterGoal ? 'e' : '', k === today() ? 't' : ''].join(' ');
+    html += `<span class="${cls}">${d}</span>`;
+  }
+  $('#cal').innerHTML = html;
+  $('#calNext').disabled = calOffset >= 0;
+}
+$('#calPrev').onclick = () => { calOffset--; renderRegul(); };
+$('#calNext').onclick = () => { if (calOffset < 0) { calOffset++; renderRegul(); } };
+
+/* =========================================================
+   BIEN-ÊTRE
+   ========================================================= */
+function renderBien() {
+  if (bienTab === 'souffle') {
+    const m = today().slice(0, 7);
+    const mins = Math.round(state.breath.filter(b => b.date.startsWith(m)).reduce((a, b) => a + b.sec, 0) / 60);
+    $('#breathStats').textContent = mins ? `${mins} minute${mins > 1 ? 's' : ''} de respiration ce mois-ci.` : 'Choisis une technique selon ce dont tu as besoin.';
+    $('#breathList').innerHTML = BREATH.map(t => `<button class="card tech" data-b="${t.id}"><h3>${esc(t.name)}</h3>
+      <div class="tags">${t.tags.map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
+      <p class="hint">${esc(t.rhythm)}, ${Math.round(t.duration / 60)} min</p><p style="font-size:.9rem;margin-top:4px">${esc(t.benefits)}</p></button>`).join('');
+  }
+  if (bienTab === 'assiette') {
+    const cats = [
+      ['legumes', 'Légumes', 'yes'], ['fruits', 'Fruits', 'yes'], ['prot', 'Protéines', 'yes'], ['cer', 'Céréales et féculents', 'yes'],
+      ['fat', 'Bons gras', 'yes'], ['spice', 'Épices et herbes', 'yes'], ['bev', 'Boissons', 'yes'], ['mod', 'Avec modération', 'mod'], ['no', 'À éviter', 'no']
+    ];
+    const label = { yes: 'à volonté', mod: 'parfois', no: 'rarement' };
+    const inList = new Set(state.shopping.map(s => s.name));
+    $('#foods').innerHTML = cats.map(([id, name, st]) => `<div class="card food-cat"><div class="row between"><h3>${name}</h3><span class="pill-${st}">${label[st]}</span></div>
+      <div class="chips">${FOODS[id].map(f => `<button class="chip" aria-pressed="${inList.has(f)}" data-food="${esc(f)}">${esc(f)}</button>`).join('')}</div></div>`).join('');
+  }
+  if (bienTab === 'courses') {
+    const L = state.shopping;
+    $('#shopList').innerHTML = L.length ? L.map((s, i) => `<div class="list-row"><button class="check" role="checkbox" aria-checked="${s.done}" data-si="${i}" aria-label="${esc(s.name)}"></button>
+      <span class="grow ${s.done ? 'done-txt' : ''}">${esc(s.name)}</span><button class="del" data-sdel="${i}" aria-label="Retirer ${esc(s.name)}">${ICON_X}</button></div>`).join('')
+      : '<p class="empty">Ta liste est vide. Ajoute un article ci-dessus ou depuis l\'onglet Alimentation.</p>';
+  }
+}
+$('#breathList').addEventListener('click', e => { const b = e.target.closest('[data-b]'); if (b) startBreath(b.dataset.b); });
+$('#foods').addEventListener('click', e => {
+  const b = e.target.closest('[data-food]'); if (!b) return;
+  const n = b.dataset.food, on = b.getAttribute('aria-pressed') !== 'true';
+  if (on) state.shopping.push({ name: n, done: false }); else state.shopping = state.shopping.filter(s => s.name !== n);
+  b.setAttribute('aria-pressed', on); save();
+});
+$('#shopList').addEventListener('click', e => {
+  const c = e.target.closest('[data-si]'), d = e.target.closest('[data-sdel]');
+  if (c) { const s = state.shopping[c.dataset.si]; s.done = !s.done; save(); renderBien(); }
+  if (d) { const [old] = state.shopping.splice(d.dataset.sdel, 1); save(); renderBien(); toast('Article retiré.', { label: 'Annuler', run: () => { state.shopping.splice(+d.dataset.sdel, 0, old); save(); renderBien(); } }); }
+});
+$('#addShop').addEventListener('submit', e => {
+  e.preventDefault();
+  const v = $('#shopInput').value.trim(); if (!v) return;
+  state.shopping.push({ name: v, done: false }); $('#shopInput').value = ''; save(); renderBien();
+});
+$('#shopClearDone').onclick = () => { state.shopping = state.shopping.filter(s => !s.done); save(); renderBien(); };
+$('#shopClear').onclick = async () => {
+  if (!state.shopping.length) return;
+  if (await confirmDlg('Vider la liste ?', 'Tous les articles seront retirés.', 'Vider')) { state.shopping = []; save(); renderBien(); }
+};
+
+/* Respiration guidée */
+let br = null;
+function startBreath(id) {
+  const t = BREATH.find(b => b.id === id); if (!t) return;
+  $('#brTitle').textContent = t.name;
+  $('#brRhythm').textContent = t.rhythm;
+  const ball = $('#brBall');
+  br = { t, start: Date.now(), idx: 0, timer: null };
+  $('#dlgBreath').showModal();
+  const stepFn = () => {
+    const el = (Date.now() - br.start) / 1000;
+    if (el >= t.duration) { stopBreath(true); return; }
+    const [label, ms] = t.cycle[br.idx % t.cycle.length];
+    ball.textContent = label;
+    ball.style.transitionDuration = ms + 'ms';
+    if (label === 'Inspire') ball.classList.add('big');
+    if (label === 'Expire') ball.classList.remove('big');
+    const left = Math.ceil(t.duration - el);
+    $('#brLeft').textContent = 'Encore ' + Math.floor(left / 60) + ' min ' + pad2(left % 60);
+    br.idx++;
+    br.timer = setTimeout(stepFn, ms);
+  };
+  ball.classList.remove('big');
+  setTimeout(stepFn, 400);
+}
+function stopBreath(finished) {
+  if (!br) return;
+  clearTimeout(br.timer);
+  const sec = Math.round((Date.now() - br.start) / 1000);
+  if (sec >= 30) { state.breath.push({ date: today(), tech: br.t.id, sec: Math.min(sec, br.t.duration) }); save(); }
+  br = null;
+  if ($('#dlgBreath').open) $('#dlgBreath').close();
+  if (finished) toast('Séance de respiration terminée.');
+  if (current === 'bien') renderBien();
+}
+$('#brStop').onclick = () => stopBreath(false);
+$('#dlgBreath').addEventListener('close', () => stopBreath(false));
+
+
+/* =========================================================
+   ÉNERGIE : dépense estimée, assiette, pas
+   ========================================================= */
+const MET = { 'Marche': 3.5, 'Course': 8, 'Randonnée': 6, 'Yoga / souplesse': 2.5, 'Force à la maison': 3.5, 'Street workout': 4, 'Tennis': 7, 'Vélo': 6, 'Natation': 6, 'Danse': 5, 'Autre': 4 };
+const MEALS = { matin: 'Petit-déjeuner', midi: 'Déjeuner', soir: 'Dîner', snack: 'En-cas' };
+function weightOn(k) { return (state.weights.filter(w => w.date <= k).at(-1) || state.weights[0])?.value || state.settings.weightStart; }
+function bmrOn(k) {
+  const S = state.settings;
+  if (!S.sex || !S.height || !S.birthYear) return null;
+  const age = dateOf(k).getFullYear() - S.birthYear;
+  return Math.round(10 * weightOn(k) + 6.25 * S.height - 5 * age + (S.sex === 'm' ? 5 : -161));
+}
+// Dépense du jour = métabolisme × 1,2 (vie quotidienne, ~3 000 pas inclus) + pas au-delà + séances.
+function energyOn(k) {
+  const bmr = bmrOn(k); if (!bmr) return null;
+  const w = weightOn(k), steps = state.steps[k] || 0;
+  const stepsK = Math.max(0, steps - 3000) * 0.00055 * w;
+  let act = 0;
+  sessionsOn(k).forEach(s => {
+    if (s.free && steps && /Marche|Randonnée/.test(s.type)) return; // déjà dans les pas
+    const met = s.free ? (MET[s.type] || 4) : s.kind === 'course' ? 6 : 3.5;
+    const min = s.min || (s.free ? 30 : 50);
+    act += (met - 1) * w * min / 60;
+  });
+  const total = Math.round(bmr * 1.2 + stepsK + act);
+  const budget = Math.max(bmr, 1200, total - state.settings.deficit);
+  return { bmr, total, stepsK: Math.round(stepsK), act: Math.round(act), budget };
+}
+const eatenOn = k => (state.food[k] || []).reduce((a, x) => a + x.kcal, 0);
+function mealNow() { const h = new Date().getHours(); return h < 11 ? 'matin' : h < 15 ? 'midi' : h < 18 ? 'snack' : 'soir'; }
+let meal = mealNow(), pending = [];
+
+function renderFoodCard() {
+  const k = today(), eaten = eatenOn(k), en = energyOn(k);
+  $$('#mealSeg button').forEach(b => b.setAttribute('aria-selected', b.dataset.m === meal));
+  const meter = $('#kcalMeter');
+  if (en) {
+    const left = en.budget - eaten;
+    $('#kcalTxt').textContent = num(eaten, 0) + ' / ' + num(en.budget, 0) + ' kcal';
+    meter.hidden = false;
+    meter.querySelector('i').style.width = Math.min(100, eaten / en.budget * 100) + '%';
+    meter.classList.toggle('over', left < 0);
+    meter.setAttribute('aria-valuenow', Math.round(eaten / en.budget * 100));
+    $('#kcalHint').textContent = left >= 0 ? `Encore environ ${num(left, 0)} kcal. Dépense estimée : ${num(en.total, 0)} kcal.`
+      : `${num(-left, 0)} kcal au-dessus de ta marge du jour. Rien de grave : c'est la moyenne de la semaine qui compte.`;
+  } else {
+    $('#kcalTxt').textContent = num(eaten, 0) + ' kcal';
+    meter.hidden = true;
+    $('#kcalHint').innerHTML = 'Renseigne ton sexe, ta taille et ton année de naissance dans <button class="link" data-goto="moi">Moi</button> pour calculer ta marge du jour.';
+  }
+  $('#favChips').innerHTML = state.favMeals.map((f, i) => `<button class="chip fav" data-fav="${i}">${esc(f.name)} · ${num(f.items.reduce((a, x) => a + x.kcal, 0), 0)} kcal</button>`).join('');
+  const L = state.food[k] || [];
+  $('#foodDay').innerHTML = Object.keys(MEALS).filter(m => L.some(x => x.meal === m)).map(m => {
+    const its = L.filter(x => x.meal === m);
+    return `<p class="meal-h">${MEALS[m]} <span class="hint">${num(its.reduce((a, x) => a + x.kcal, 0), 0)} kcal</span></p>` +
+      its.map(x => `<div class="food-row"><span class="grow">${esc(shortName(x.name))} <span class="hint">${num(x.g, 0)} g</span></span><span class="k">${num(x.kcal, 0)} kcal</span><button class="del" data-fdel="${x.id}" aria-label="Retirer ${esc(x.name)}">${ICON_X}</button></div>`).join('');
+  }).join('');
+}
+const shortName = n => n.split(',').slice(0, 2).join(',').replace(/\s*\(.*?\)/g, '');
+$('#mealSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { meal = b.dataset.m; renderFoodCard(); } });
+$('#s-today').addEventListener('click', e => { const g = e.target.closest('[data-goto]'); if (g) go(g.dataset.goto); });
+$('#foodForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const t = $('#foodText').value.trim();
+  if (!t) { toast('Écris ce que tu as mangé, par exemple « 2 œufs et une pomme ».'); return; }
+  try { pending = await Nutrition.estimate(t); }
+  catch { toast('La table des aliments n\'a pas pu être chargée. Ouvre l\'app une fois avec du réseau.'); return; }
+  $('#favSave').checked = false; $('#favNameField').hidden = true; $('#favName').value = '';
+  renderPending();
+  $('#dlgFood').showModal();
+});
+function renderPending() {
+  $('#foodItems').innerHTML = pending.map((it, i) => it.found ? `<div class="fi">
+      <span class="src">« ${esc(it.text)} »${it.guessed ? ', quantité devinée' : ''}</span>
+      <select data-pi="${i}" aria-label="Aliment pour ${esc(it.text)}">${it.alts.map(a => `<option value="${a.code}"${a.code === it.code ? ' selected' : ''}>${esc(shortName(a.name))}</option>`).join('')}</select>
+      <div class="gr"><input type="number" inputmode="numeric" min="0" value="${it.g}" data-pg="${i}" aria-label="Grammes"><span class="hint">g</span><span class="k" id="pk${i}">${num(it.kcal, 0)} kcal</span>
+      <button type="button" class="del" data-prm="${i}" aria-label="Retirer">${ICON_X}</button></div></div>`
+    : `<div class="fi miss">Je n'ai pas reconnu « ${esc(it.text)} ». Reformule-le avec un mot plus courant.</div>`).join('');
+  $('#foodTotal').textContent = num(pending.filter(x => x.found).reduce((a, x) => a + x.kcal, 0), 0) + ' kcal';
+}
+$('#foodItems').addEventListener('change', e => {
+  const i = e.target.dataset.pi ?? e.target.dataset.pg; if (i === undefined) return;
+  const it = pending[i];
+  pending[i] = Nutrition.recompute(it, e.target.dataset.pi !== undefined ? +e.target.value : it.code, e.target.dataset.pg !== undefined ? Math.max(0, +e.target.value || 0) : it.g);
+  renderPending();
+});
+$('#foodItems').addEventListener('click', e => { const b = e.target.closest('[data-prm]'); if (b) { pending.splice(+b.dataset.prm, 1); renderPending(); } });
+$('#favSave').addEventListener('change', e => { $('#favNameField').hidden = !e.target.checked; if (e.target.checked) $('#favName').focus(); });
+$('#foodReview').addEventListener('submit', e => {
+  e.preventDefault();
+  const items = pending.filter(x => x.found && x.g > 0).map(({ code, name, g, kcal, p, c, f }) => ({ code, name, g, kcal, p, c, f }));
+  if (!items.length) { $('#dlgFood').close(); return; }
+  addFood(items);
+  if ($('#favSave').checked) {
+    state.favMeals.push({ name: $('#favName').value.trim() || MEALS[meal], items }); save();
+  }
+  $('#foodText').value = '';
+  $('#dlgFood').close();
+  toast(num(items.reduce((a, x) => a + x.kcal, 0), 0) + ' kcal ajoutées au ' + MEALS[meal].toLowerCase() + '.');
+});
+function addFood(items) {
+  const k = today();
+  (state.food[k] ||= []).push(...items.map(x => ({ ...x, id: uid(), meal })));
+  save(); renderToday();
+}
+$('#favChips').addEventListener('click', e => {
+  const b = e.target.closest('[data-fav]'); if (!b) return;
+  const f = state.favMeals[b.dataset.fav];
+  const before = (state.food[today()] || []).length;
+  addFood(f.items);
+  toast(f.name + ' ajouté.', { label: 'Annuler', run: () => { state.food[today()].splice(before); save(); renderToday(); } });
+});
+$('#foodDay').addEventListener('click', e => {
+  const id = e.target.closest('[data-fdel]')?.dataset.fdel; if (!id) return;
+  const L = state.food[today()], i = L.findIndex(x => x.id === id), [old] = L.splice(i, 1);
+  save(); renderToday();
+  toast('Aliment retiré.', { label: 'Annuler', run: () => { L.splice(i, 0, old); save(); renderToday(); } });
+});
+function renderFavList() {
+  $('#favList').innerHTML = state.favMeals.length ? state.favMeals.map((f, i) => `<div class="list-row"><div class="grow"><b>${esc(f.name)}</b>
+    <div class="hint">${esc(f.items.map(x => shortName(x.name).split(',')[0]).join(', '))} · ${num(f.items.reduce((a, x) => a + x.kcal, 0), 0)} kcal</div></div>
+    <button class="del" data-favdel="${i}" aria-label="Supprimer ${esc(f.name)}">${ICON_X}</button></div>`).join('')
+    : '<p class="empty">Après une estimation, coche « Enregistrer comme repas habituel » pour l\'ajouter ensuite d\'un seul geste.</p>';
+}
+$('#favList').addEventListener('click', async e => {
+  const i = e.target.closest('[data-favdel]')?.dataset.favdel; if (i === undefined) return;
+  if (!await confirmDlg('Supprimer ce repas habituel ?', state.favMeals[i].name, 'Supprimer')) return;
+  state.favMeals.splice(i, 1); save(); renderFavList();
+});
+
+function renderStepsCard() {
+  const k = today(), st = state.steps[k] || 0, w = weightOn(k), goal = state.settings.stepsGoal;
+  $('#stepsInput').value = ''; $('#stepsInput').placeholder = st ? 'Corriger : ' + num(st, 0) + ' pas' : 'Pas du jour (Google Fit, Samsung Santé…)';
+  $('#stepsTxt').textContent = st >= goal ? 'objectif atteint' : st ? 'encore ' + num(goal - st, 0) : 'objectif ' + num(goal, 0);
+  $('#stepsHint').textContent = st ? `${num(st, 0)} pas, soit environ ${num(Math.round(st * 0.00055 * w), 0)} kcal brûlées en marchant (environ ${num(st * 0.00072, 1)} km).`
+    : 'Recopie le nombre de pas affiché par ton téléphone, le soir par exemple.';
+}
+$('#stepsForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const v = parseInt($('#stepsInput').value, 10);
+  if (!(v >= 0 && v < 100000)) { toast('Entre un nombre de pas.'); return; }
+  state.steps[today()] = v; save(); $('#stepsInput').blur(); renderToday();
+  toast(v >= state.settings.stepsGoal ? 'Objectif de pas atteint. Bravo.' : 'Pas notés.');
+});
+
+function renderKcal() {
+  const C = COLORS(), days = Array.from({ length: 14 }, (_, i) => addDays(today(), i - 13));
+  const logged = days.slice(7).filter(k => (state.food[k] || []).length);
+  const avgE = logged.length ? logged.reduce((a, k) => a + eatenOn(k), 0) / logged.length : null;
+  const ens = logged.map(energyOn).filter(Boolean);
+  const avgD = ens.length ? ens.reduce((a, x) => a + x.total, 0) / ens.length : null;
+  const P = k => (state.food[k] || []).reduce((a, x) => ({ p: a.p + x.p, c: a.c + x.c, f: a.f + x.f }), { p: 0, c: 0, f: 0 });
+  const mac = logged.map(P).reduce((a, x) => ({ p: a.p + x.p / logged.length, c: a.c + x.c / logged.length, f: a.f + x.f / logged.length }), { p: 0, c: 0, f: 0 });
+  $('#kcalStats').innerHTML = [
+    stat('Mangé, moyenne 7 j', avgE === null ? '—' : num(avgE, 0), avgE === null ? '' : 'kcal', logged.length + ' jour' + (logged.length > 1 ? 's' : '') + ' notés'),
+    stat('Dépense estimée', avgD === null ? '—' : num(avgD, 0), avgD === null ? '' : 'kcal', avgD === null ? 'profil à compléter dans Moi' : 'moyenne des mêmes jours'),
+    stat('Bilan moyen', avgE === null || avgD === null ? '—' : signed(Math.round(avgE - avgD)).replace(',0', ''), avgE === null || avgD === null ? '' : 'kcal/j', avgE !== null && avgD !== null ? (avgE < avgD ? 'en déficit' : 'en surplus') : '', avgE !== null && avgD !== null ? (avgE < avgD ? 'good' : 'bad') : ''),
+    stat('Protéines, moyenne', logged.length ? num(mac.p, 0) : '—', logged.length ? 'g/j' : '', logged.length ? `glucides ${num(mac.c, 0)} g, lipides ${num(mac.f, 0)} g` : '')
+  ].join('');
+  Charts.line($('#kcalChart'), {
+    title: 'Calories mangées et dépensées', unit: 'kcal', decimals: 0, empty: 'Note tes repas sur l\'écran Aujourd\'hui pour voir la courbe.',
+    series: [
+      { name: 'Mangé', color: C.rose, dots: true, points: days.filter(k => (state.food[k] || []).length).map(k => ({ date: k, y: eatenOn(k) })) },
+      { name: 'Dépense estimée', color: C.olive, points: days.map(k => ({ date: k, e: energyOn(k) })).filter(x => x.e && (state.food[x.date] || []).length).map(x => ({ date: x.date, y: x.e.total })) }
+    ]
+  });
+  const recent = days.slice().reverse().filter(k => (state.food[k] || []).length);
+  $('#kcalLog').innerHTML = recent.length ? recent.map(k => {
+    const en = energyOn(k), e = eatenOn(k);
+    return `<div class="list-row"><span class="date">${fmtShort(k)}</span><span class="val grow">${num(e, 0)} kcal</span>${en ? `<span class="hint">${signed(e - en.total).replace(',0', '')}</span>` : ''}</div>`;
+  }).join('') : '<p class="empty">Aucun repas noté ces deux dernières semaines.</p>';
+}
+function renderPas() {
+  const C = COLORS(), goal = state.settings.stepsGoal;
+  const days = Array.from({ length: 14 }, (_, i) => addDays(today(), i - 13));
+  const last7 = days.slice(7).map(k => state.steps[k] || 0).filter(Boolean);
+  const all = Object.values(state.steps);
+  const hit = Array.from({ length: 30 }, (_, i) => addDays(today(), -i)).filter(k => (state.steps[k] || 0) >= goal).length;
+  $('#pasStats').innerHTML = [
+    stat('Moyenne 7 jours', last7.length ? num(last7.reduce((a, b) => a + b, 0) / last7.length, 0) : '—', '', last7.length + ' jour' + (last7.length > 1 ? 's' : '') + ' notés'),
+    stat('Objectif atteint', hit, 'j', 'sur les 30 derniers jours'),
+    stat('Record', all.length ? num(Math.max(...all), 0) : '—', '', 'pas en une journée')
+  ].join('');
+  Charts.bars($('#pasChart'), {
+    color: C.olive, unit: 'pas', goal: { y: goal, label: 'objectif' }, labelHead: 'Jour', valueHead: 'Pas',
+    empty: "Note tes pas sur l'écran Aujourd'hui pour voir l'historique.",
+    bars: days.map(k => ({ label: dateOf(k).getDate() + '', tipLabel: fmtShort(k), value: state.steps[k] || 0, full: (state.steps[k] || 0) >= goal }))
+  });
+}
+
+/* Modules affichés */
+function applyModules() {
+  const M = state.settings.modules;
+  $$('[data-module]').forEach(el => { el.hidden = !M[el.dataset.module]; });
+  const firstVisible = seg => $$(seg + ' button').find(b => !b.hidden);
+  if ($(`#progSeg [data-p="${progTab}"]`).hidden) { progTab = firstVisible('#progSeg').dataset.p; }
+  $$('#progSeg button').forEach(b => b.setAttribute('aria-selected', b.dataset.p === progTab));
+  panelSwitch('#s-progres', progTab);
+  const bienOn = M.souffle || M.courses;
+  $('.nav [data-s="bien"]').hidden = !bienOn;
+  if (bienOn && $(`#bienSeg [data-p="${bienTab}"]`).hidden) bienTab = firstVisible('#bienSeg').dataset.p;
+  $$('#bienSeg button').forEach(b => b.setAttribute('aria-selected', b.dataset.p === bienTab));
+  panelSwitch('#s-bien', bienTab);
+  if (!bienOn && current === 'bien') go('today');
+}
+
+/* =========================================================
+   MOI
+   ========================================================= */
+function goalProgress(g) {
+  const S = state.settings;
+  if (g.id === 'poids' && state.weights.length) {
+    const last = state.weights.at(-1).value;
+    const pct = (S.weightStart - last) / (S.weightStart - S.weightGoal);
+    return { pct, txt: `${num(last)} kg sur un objectif de ${num(S.weightGoal)} kg` };
+  }
+  if (g.testKey && state.tests[g.testKey]?.length) {
+    const t = TESTS.find(x => x.id === g.testKey), L = state.tests[g.testKey];
+    const a = L[0].value, b = L.at(-1).value, target = parseFloat(t.goal);
+    const pct = isNaN(target) || a === target ? null : (a - b) / (a - target);
+    return { pct, txt: `Dernière mesure : ${num(b)} ${t.unit}, objectif ${t.goal}` };
+  }
+  return null;
+}
+function renderMoi() {
+  const S = state.settings;
+  const goals = GOALS.map(g => g.id === 'poids' ? { ...g, title: `Poids ${num(S.weightStart)} → ${num(S.weightGoal)} kg` } : g);
+  $('#goals').innerHTML = goals.map(g => {
+    const p = goalProgress(g), ok = !!state.goalsDone[g.id];
+    return `<div class="card goal${ok ? ' ok' : ''}"><div class="row"><button class="check" role="checkbox" aria-checked="${ok}" data-goal="${g.id}" aria-label="Objectif atteint : ${esc(g.title)}"></button>
+      <div class="grow"><h3>${esc(g.title)}</h3><span class="hint">${esc(g.meta)}</span></div></div>
+      <p style="font-size:.9rem;margin-top:8px;color:var(--ink-2)">${esc(g.desc)}</p>
+      ${p ? `${p.pct !== null ? `<div class="meter" role="progressbar" aria-valuenow="${Math.round(Math.max(0, Math.min(1, p.pct)) * 100)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${Math.max(0, Math.min(1, p.pct)) * 100}%"></i></div>` : ''}<p class="hint" style="margin-top:6px">${esc(p.txt)}</p>` : ''}</div>`;
+  }).join('');
+  const notes = $('#notes'); if (document.activeElement !== notes) notes.value = state.notes;
+  const f = $('#settingsForm');
+  Object.entries(S).forEach(([k, v]) => { if (f.elements[k] && typeof v !== 'object') f.elements[k].value = v || (k === 'deficit' ? 0 : ''); });
+  Object.entries(S.modules).forEach(([m, on]) => { f.elements['m_' + m].checked = on; });
+  renderFavList();
+}
+$('#goals').addEventListener('click', e => {
+  const b = e.target.closest('[data-goal]'); if (!b) return;
+  const id = b.dataset.goal; state.goalsDone[id] = !state.goalsDone[id]; save(); renderMoi();
+  if (state.goalsDone[id]) toast('Objectif atteint. Bien joué.');
+});
+let notesT;
+$('#notes').addEventListener('input', e => { clearTimeout(notesT); notesT = setTimeout(() => { state.notes = e.target.value; save(); }, 400); });
+$('#settingsForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = new FormData(e.target), S = state.settings;
+  S.startDate = f.get('startDate') || S.startDate;
+  ['weightStart', 'weightGoal', 'waterGoal', 'glass', 'rest', 'height', 'birthYear', 'stepsGoal'].forEach(k => { const v = parseFloat(f.get(k)); if (v > 0) S[k] = v; });
+  const def = parseFloat(f.get('deficit')); if (def >= 0) S.deficit = Math.min(1000, def);
+  S.theme = f.get('theme'); S.sex = f.get('sex');
+  Object.keys(S.modules).forEach(m => S.modules[m] = f.get('m_' + m) === 'on');
+  applyTheme(); applyModules(); save(); viewPhase = null; toast('Réglages enregistrés.');
+});
+function applyTheme() {
+  const t = state.settings.theme;
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  const dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+  $$('meta[name="theme-color"]').forEach(m => m.content = dark ? '#1E1718' : '#FAF3F0');
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { applyTheme(); render(); });
+
+/* Sauvegarde / restauration / récap */
+async function shareOrDownload(name, text, type) {
+  const file = new File([text], name, { type });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return true; }
+    catch (e) { if (e.name === 'AbortError') return false; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  return true;
+}
+$('#exportBtn').onclick = async () => {
+  const ok = await shareOrDownload('mon-cadre-sauvegarde-' + today() + '.json', JSON.stringify(state, null, 1), 'application/json');
+  if (ok) { state.lastBackup = today(); save(); toast('Sauvegarde créée.'); }
+};
+$('#importFile').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  let data;
+  try { data = JSON.parse(await file.text()); } catch { toast('Ce fichier n\'est pas une sauvegarde Mon cadre.'); return; }
+  if (!data || (!data.weights && !data.sessionLogs && !data.sessions)) { toast('Ce fichier n\'est pas une sauvegarde Mon cadre.'); return; }
+  if (!await confirmDlg('Restaurer cette sauvegarde ?', 'Les données actuelles de l\'app seront remplacées par celles du fichier.', 'Restaurer')) return;
+  state = normalize(data); save(); applyTheme(); render(); toast('Sauvegarde restaurée.');
+});
+$('#recapBtn').onclick = async () => {
+  const m = today().slice(0, 7), label = new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  const ses = state.sessions.filter(s => s.date.startsWith(m));
+  const W = state.weights.filter(w => w.date.startsWith(m));
+  const waterDays = Object.entries(state.water).filter(([k]) => k.startsWith(m));
+  const ph = phaseInfo();
+  let t = `Mon cadre — récap de ${label}\nPhase ${ph.num} (${ph.name}), semaine ${ph.week}\n\n`;
+  t += `Séances : ${ses.length}\n` + ses.map(s => `- ${fmtShort(s.date)} : ${s.free ? s.type + (s.min ? ' ' + s.min + ' min' : '') : s.label}${s.feel ? ' (' + s.feel + '/5)' : ''}${s.note ? ' — ' + s.note : ''}`).join('\n') + '\n\n';
+  t += W.length >= 2 ? `Poids : ${num(W[0].value)} → ${num(W.at(-1).value)} kg (${signed(W.at(-1).value - W[0].value)} kg)\n` : W.length ? `Poids : ${num(W[0].value)} kg\n` : 'Poids : pas de pesée\n';
+  if (waterDays.length) t += `Eau : ${num(waterDays.reduce((a, [, v]) => a + v, 0) / waterDays.length / 1000, 2)} L par jour en moyenne, objectif atteint ${waterDays.filter(([, v]) => v >= state.settings.waterGoal).length} jours\n`;
+  const exNames = [...new Set(ses.flatMap(s => Object.keys(s.exos || {})))];
+  if (exNames.length) {
+    t += '\nExercices :\n';
+    exNames.forEach(n => {
+      const H = exoHistory(n).filter(h => h.date.startsWith(m));
+      t += `- ${n} : ` + H.map(h => fmtShort(h.date) + ' ' + h.sets.map(s => (s.kg ? num(s.kg) + 'kg×' : '') + s.reps).join(', ')).join(' | ') + '\n';
+    });
+  }
+  const foodDays = Object.keys(state.food).filter(k => k.startsWith(m) && state.food[k].length);
+  if (foodDays.length) {
+    const ens = foodDays.map(energyOn).filter(Boolean);
+    t += `Calories : ${num(foodDays.reduce((a, k) => a + eatenOn(k), 0) / foodDays.length, 0)} kcal mangées par jour en moyenne (${foodDays.length} jours notés)`;
+    t += ens.length ? `, dépense estimée ${num(ens.reduce((a, x) => a + x.total, 0) / ens.length, 0)} kcal\n` : '\n';
+  }
+  const stepDays = Object.entries(state.steps).filter(([k, v]) => k.startsWith(m) && v);
+  if (stepDays.length) t += `Pas : ${num(stepDays.reduce((a, [, v]) => a + v, 0) / stepDays.length, 0)} par jour en moyenne, objectif atteint ${stepDays.filter(([, v]) => v >= state.settings.stepsGoal).length} jours\n`;
+  const br_ = state.breath.filter(b => b.date.startsWith(m));
+  if (br_.length) t += `\nRespiration : ${br_.length} séances, ${Math.round(br_.reduce((a, b) => a + b.sec, 0) / 60)} min\n`;
+  if (state.notes.trim()) t += `\nNotes :\n${state.notes.trim()}\n`;
+  if (navigator.share) { try { await navigator.share({ title: 'Mon récap', text: t }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  try { await navigator.clipboard.writeText(t); toast('Récap copié : colle-le où tu veux.'); }
+  catch { shareOrDownload('mon-cadre-recap-' + m + '.txt', t, 'text/plain'); }
+};
+
+/* =========================================================
+   DIALOGUES : fermeture par le fond (repli si closedby absent)
+   ========================================================= */
+$$('dialog').forEach(d => {
+  d.addEventListener('click', e => { if (e.target.closest('[data-close]')) d.close(); });
+  if (!('closedBy' in HTMLDialogElement.prototype) && d.getAttribute('closedby') === 'any') {
+    d.addEventListener('click', e => {
+      if (e.target !== d) return;
+      const r = d.getBoundingClientRect();
+      if (e.clientY < r.top || e.clientY > r.bottom || e.clientX < r.left || e.clientX > r.right) d.close();
+    });
+  }
+});
+
+/* =========================================================
+   INSTALLATION (PWA)
+   ========================================================= */
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; $('#installBanner').hidden = false; });
+window.addEventListener('appinstalled', () => { $('#installBanner').hidden = true; toast('Mon cadre est installée.'); });
+if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) $('#installBanner').hidden = false;
+$('#installBtn').onclick = async () => {
+  if (deferredPrompt) { deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt = null; $('#installBanner').hidden = true; }
+  else $('#dlgInstall').showModal();
+};
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW', err));
+}
+
+/* =========================================================
+   DÉMARRAGE
+   ========================================================= */
+load();
+applyTheme();
+applyModules();
+render();
+// Raccourcis de l'icône (appui long sur Android)
+const action = new URLSearchParams(location.search).get('action');
+if (action) {
+  history.replaceState(null, '', location.pathname);
+  if (action === 'eau') addWater(1);
+  if (action === 'seance') startSession();
+}
+// Rafraîchit au retour sur l'app (changement de jour, etc.)
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('#dlgSession').open) render(); });
+// Rappel de sauvegarde tous les 30 jours si des données existent
+if (state.weights.length + state.sessions.length > 5 && (!state.lastBackup || (dateOf(today()) - dateOf(state.lastBackup)) / 864e5 > 30)) {
+  setTimeout(() => toast('Pense à sauvegarder tes données.', { label: 'Sauvegarder', run: () => $('#exportBtn').click() }), 2500);
+}
