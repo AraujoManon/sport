@@ -6,9 +6,11 @@
 
 const STORE = 'monCadre_v4';
 const OLD_STORE = 'monCadre_v3';
+const IDB_NAME = 'mon-cadre-kv', IDB_STORE = 'kv';
 const DEFAULT_SETTINGS = {
   startDate: '2026-07-07', weightStart: 86, weightGoal: 80,
   waterGoal: 2250, glass: 750, rest: 90, theme: 'auto', stepsGoal: 8000,
+  eveningReminder: false,
   modules: { pas: true, eau: true, souffle: true, tests: true }
 };
 const blank = () => ({
@@ -83,9 +85,44 @@ function load() {
 function save() {
   try { localStorage.setItem(STORE, JSON.stringify(state)); }
   catch (e) { toast("Enregistrement impossible : le stockage du téléphone est plein ou bloqué."); }
+  syncReminderState();
 }
 // Demande au navigateur de ne pas effacer les données (utile sur iPhone).
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+
+// Copie minimale de l'état du jour dans IndexedDB : le service worker n'a pas accès à localStorage,
+// c'est le seul moyen pour lui de savoir, en tâche de fond, si la journée est déjà remplie.
+function idbPut(key, val) {
+  try {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => {
+      const db = req.result, tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(val, key);
+      tx.oncomplete = () => db.close();
+    };
+  } catch (e) {}
+}
+function syncReminderState() {
+  idbPut('status', { date: today(), complete: dayComplete(today()), remind: !!state.settings.eveningReminder });
+}
+// Une journée compte comme faite quand les objectifs activés (séance, eau, pas) sont atteints.
+function dayComplete(k) {
+  const prog = programFor(dateOf(k).getDay(), phaseInfo(k).num);
+  const ses = sessionsOn(k).length > 0 || kindOf(prog.type) === 'repos';
+  const M = state.settings.modules;
+  const eau = !M.eau || (state.water[k] || 0) >= state.settings.waterGoal;
+  const pas = !M.pas || (state.steps[k] || 0) >= state.settings.stepsGoal;
+  return ses && eau && pas;
+}
+// Jours consécutifs avec objectifs atteints, jusqu'à hier si la journée en cours n'est pas finie.
+function habitStreak() {
+  let k = today();
+  if (!dayComplete(k)) k = addDays(k, -1);
+  let n = 0;
+  while (k >= state.settings.startDate && dayComplete(k)) { n++; k = addDays(k, -1); }
+  return n;
+}
 
 /* ---------- Toast & confirmation ---------- */
 let toastTimer;
@@ -215,7 +252,13 @@ function renderToday() {
   $('#lgP').textContent = M.pas ? (steps ? num(steps, 0) : 'À noter') : (w ? num(w.value) + ' kg' : 'À faire');
   $('#lgWrow').hidden = !M.pas;
   $('#lgW').textContent = w ? num(w.value) + ' kg' : 'À faire';
+  const brSec = state.breath.filter(b => b.date === k).reduce((a, b) => a + b.sec, 0);
+  $('#lgB').textContent = brSec ? Math.max(1, Math.round(brSec / 60)) + ' min' : 'pas encore';
   if (M.pas) renderStepsCard();
+
+  const strk = habitStreak();
+  $('#streakTxt').hidden = !strk;
+  if (strk) $('#streakTxt').innerHTML = 'Série en cours : <b>' + strk + ' jour' + (strk > 1 ? 's' : '') + '</b> d\'objectifs atteints.';
 
   // Séance du jour
   const box = $('#todaySession');
@@ -450,10 +493,16 @@ function renderRecap() {
     <div class="btns" style="margin-top:8px"><button class="btn ghost" data-act="prev">Revenir</button><button class="btn danger" data-act="abandon">Abandonner</button></div></div>`;
   $('#sesNote').addEventListener('input', ev => { d.note = ev.target.value; save(); });
 }
+// Valeur comparable d'une série d'un exercice, dans le même sens que exoMetric().
+function exoVal(def, sets) {
+  const assisted = isAssisted(def) && sets.some(s => s.kg > 0);
+  const weighted = !assisted && sets.some(s => s.kg > 0);
+  return assisted ? Math.min(...sets.map(s => s.kg)) : weighted ? Math.max(...sets.map(s => s.kg)) : Math.max(...sets.map(s => s.reps));
+}
 function finishSession() {
   const d = state.draft;
   if (!d.feel) { toast('Donne une note de ressenti avant d\'enregistrer.'); return; }
-  const exos = {};
+  const exos = {}, records = [];
   d.exos.forEach(e => {
     const sets = d.sets[e.n];
     if (!sets) return;
@@ -463,6 +512,11 @@ function finishSession() {
     exos[e.n] = { sets: okSets.map(s => ({ kg: s.kg, reps: s.reps })), feel: d.feels[e.n] || 0, unit: unitOf(e), weighted: isWeighted(e) };
     // On garde toutes les séries prévues pour pré-remplir la prochaine fois.
     state.exoLast[e.n] = { sets: sets.map(s => ({ kg: s.kg, reps: s.reps })), allOk: sets.every(s => s.ok), date: d.date };
+    const H = exoHistory(e.n);
+    if (H.length) {
+      const M = exoMetric(e.n, H), v = exoVal(e, okSets);
+      if (M.assisted ? v < M.best : v > M.best) records.push(e.n);
+    }
   });
   const min = d.startedAt ? Math.min(150, Math.max(15, Math.round((Date.now() - d.startedAt) / 60000))) : 0;
   state.sessions.push({ id: uid(), date: d.date, type: d.type, label: d.label, kind: d.kind, phase: d.phase, feel: d.feel, note: d.note.trim(), exos, min });
@@ -470,7 +524,7 @@ function finishSession() {
   save(); stopRest();
   $('#dlgSession').close();
   render();
-  toast('Séance enregistrée. Bravo.');
+  toast(records.length ? 'Nouveau record : ' + records.join(', ') + ' !' : 'Séance enregistrée. Bravo.');
 }
 
 /* ---------- Activité libre ---------- */
@@ -637,7 +691,8 @@ function renderExos() {
       const H = exoHistory(n), M = exoMetric(n, H), g = order.get(n)?.g || 'Autres';
       if (g !== lastG) { html += `<h3 class="exo-group">${esc(g)}</h3>`; lastG = g; }
       const d = H.length > 1 ? `<span class="badge${M.better ? ' up' : ''}">${signed(M.delta)} ${M.unit}</span>` : '';
-      html += `<div class="card exo-card"><div class="row between"><h3>${esc(n)}</h3>${d}</div>
+      const rec = H.length > 1 && M.pts.at(-1).y === M.best ? '<span class="badge rec">Record</span>' : '';
+      html += `<div class="card exo-card"><div class="row between"><h3>${esc(n)}</h3><div class="row" style="gap:6px">${rec}${d}</div></div>
         <p class="hint">${M.label}${M.assisted ? ' (moins = mieux)' : ''} : <b>${num(M.pts.at(-1).y)} ${M.unit}</b> la dernière fois, record ${num(M.best)} ${M.unit}, ${H.length} séance${H.length > 1 ? 's' : ''}</p>
         <div id="ec-${i}"></div>
         <details class="table-toggle"><summary>Détail des séances</summary>
@@ -718,10 +773,19 @@ function renderRegul() {
     const a = addDays(ws, -7 * i), b = addDays(a, 6);
     if (state.sessions.filter(s => s.date >= a && s.date <= b).length >= 3) streak++; else break;
   }
+  const M = state.settings.modules, today_ = today();
+  const waterWeek = Object.entries(state.water).filter(([k, v]) => k >= ws && k <= today_ && v).map(([, v]) => v);
+  const stepsWeek = Object.entries(state.steps).filter(([k, v]) => k >= ws && k <= today_ && v).map(([, v]) => v);
+  const breathWeek = state.breath.filter(b => b.date >= ws && b.date <= today_);
+  const wWeek = state.weights.filter(w => w.date >= ws && w.date <= today_);
   $('#regStats').innerHTML = [
     stat('Cette semaine', thisWeek + ' / ' + planned, '', 'séances prévues'),
     stat('Ce mois-ci', thisMonth, '', 'séances et activités'),
-    stat('Semaines tenues', streak, '', 'd\'affilée avec 3 séances ou plus')
+    stat('Semaines tenues', streak, '', 'd\'affilée avec 3 séances ou plus'),
+    M.eau && waterWeek.length ? stat('Eau cette semaine', num(waterWeek.reduce((a, b) => a + b, 0) / waterWeek.length / 1000, 2), 'L/j', 'en moyenne') : '',
+    M.pas && stepsWeek.length ? stat('Pas cette semaine', num(stepsWeek.reduce((a, b) => a + b, 0) / stepsWeek.length, 0), '', 'en moyenne par jour') : '',
+    M.souffle && breathWeek.length ? stat('Respiration', Math.round(breathWeek.reduce((a, b) => a + b.sec, 0) / 60), 'min', 'cette semaine') : '',
+    wWeek.length >= 2 ? stat('Poids cette semaine', signed(wWeek.at(-1).value - wWeek[0].value), 'kg', 'depuis ' + fmtShort(wWeek[0].date)) : ''
   ].join('');
   const weeks = Array.from({ length: 10 }, (_, i) => addDays(ws, -7 * (9 - i)));
   Charts.bars($('#regChart'), {
@@ -879,6 +943,7 @@ function renderMoi() {
   const f = $('#settingsForm');
   Object.entries(S).forEach(([k, v]) => { if (f.elements[k] && typeof v !== 'object') f.elements[k].value = v; });
   Object.entries(S.modules).forEach(([m, on]) => { if (f.elements['m_' + m]) f.elements['m_' + m].checked = on; });
+  f.elements.eveningReminder.checked = !!S.eveningReminder;
 }
 $('#goals').addEventListener('click', e => {
   const b = e.target.closest('[data-goal]'); if (!b) return;
@@ -887,15 +952,50 @@ $('#goals').addEventListener('click', e => {
 });
 let notesT;
 $('#notes').addEventListener('input', e => { clearTimeout(notesT); notesT = setTimeout(() => { state.notes = e.target.value; save(); }, 400); });
-$('#settingsForm').addEventListener('submit', e => {
+$('#settingsForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = new FormData(e.target), S = state.settings;
   S.startDate = f.get('startDate') || S.startDate;
   ['weightStart', 'weightGoal', 'waterGoal', 'glass', 'rest', 'stepsGoal'].forEach(k => { const v = parseFloat(f.get(k)); if (v > 0) S[k] = v; });
   S.theme = f.get('theme');
   Object.keys(S.modules).forEach(m => S.modules[m] = f.get('m_' + m) === 'on');
+  const wantReminder = f.get('eveningReminder') === 'on';
+  if (wantReminder !== S.eveningReminder) {
+    const ok = await setupReminder(wantReminder);
+    S.eveningReminder = wantReminder && ok;
+    if (wantReminder && !ok) toast('Autorise les notifications pour activer le rappel.');
+  }
   applyTheme(); applyModules(); save(); viewPhase = null; toast('Réglages enregistrés.');
 });
+// Best effort : demande la permission de notifier et, si le téléphone le permet, une vérification périodique
+// en tâche de fond (Android/Chrome seulement). L'heure n'est jamais garantie, iOS ne le supporte pas du tout :
+// en repli, un rappel s'affiche aussi dans l'app si elle est rouverte le soir sans que la journée soit remplie.
+async function setupReminder(on) {
+  if (!('serviceWorker' in navigator) || location.protocol === 'file:') return false;
+  const reg = await navigator.serviceWorker.ready.catch(() => null);
+  if (!reg) return false;
+  if (!on) {
+    if ('periodicSync' in reg) { try { await reg.periodicSync.unregister('evening-check'); } catch (e) {} }
+    return true;
+  }
+  if (!('Notification' in window)) return false;
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return false;
+  if ('periodicSync' in reg) {
+    try {
+      const status = await navigator.permissions.query({ name: 'periodic-background-sync' });
+      if (status.state === 'granted') await reg.periodicSync.register('evening-check', { minInterval: 12 * 60 * 60 * 1000 });
+    } catch (e) {}
+  }
+  return true;
+}
+// Repli dans l'app : si le rappel est activé, qu'il est tard et que la journée n'est pas remplie.
+function maybeRemindTonight() {
+  if (!state.settings.eveningReminder || new Date().getHours() < 20 || dayComplete(today())) return;
+  const key = 'mc-reminded-' + today();
+  try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, '1'); } catch (e) {}
+  toast('Un moment pour noter tes habitudes du jour ?', { label: "Aujourd'hui", run: () => go('today') });
+}
 function applyTheme() {
   const t = state.settings.theme;
   if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
@@ -1003,8 +1103,9 @@ if (action) {
   if (action === 'seance') startSession();
 }
 // Rafraîchit au retour sur l'app (changement de jour, etc.)
-document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('#dlgSession').open) render(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('#dlgSession').open) { render(); maybeRemindTonight(); } });
 // Rappel de sauvegarde tous les 30 jours si des données existent
 if (state.weights.length + state.sessions.length > 5 && (!state.lastBackup || (dateOf(today()) - dateOf(state.lastBackup)) / 864e5 > 30)) {
   setTimeout(() => toast('Pense à sauvegarder tes données.', { label: 'Sauvegarder', run: () => $('#exportBtn').click() }), 2500);
 }
+maybeRemindTonight();

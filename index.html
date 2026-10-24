@@ -33,6 +33,7 @@
 <main>
 <!-- ===================== AUJOURD'HUI ===================== -->
 <section class="screen on" id="s-today" aria-labelledby="screenTitle">
+  <p class="streak" id="streakTxt" hidden></p>
   <div class="rosace" id="rosace">
     <svg viewBox="0 0 132 132" role="img" aria-labelledby="rosaceTitle">
       <title id="rosaceTitle">Avancement de la journée</title>
@@ -45,6 +46,7 @@
       <li><i class="sw e"></i><b>Eau</b><span class="v" id="lgE">—</span></li>
       <li><i class="sw p"></i><b id="lgPname">Pas</b><span class="v" id="lgP">—</span></li>
       <li id="lgWrow"><i class="sw none"></i><b>Pesée</b><span class="v" id="lgW">—</span></li>
+      <li data-module="souffle"><i class="sw none"></i><b>Respiration</b><span class="v" id="lgB">—</span></li>
     </ul>
   </div>
 
@@ -212,6 +214,11 @@
       <label><input type="checkbox" name="m_souffle"> Respiration</label>
       <label><input type="checkbox" name="m_tests"> Tests physiques</label>
     </fieldset>
+    <fieldset class="modules">
+      <legend>Rappel</legend>
+      <label><input type="checkbox" name="eveningReminder"> Rappel le soir si je n'ai rien noté</label>
+    </fieldset>
+    <p class="hint" style="margin-top:-8px">Dépend des notifications que ton téléphone autorise pour l'app installée : l'heure n'est jamais garantie à la minute près, et ça ne marche pas sur iPhone.</p>
     <button class="btn" type="submit">Enregistrer les réglages</button>
   </form>
 
