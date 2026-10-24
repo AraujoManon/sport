@@ -16,7 +16,8 @@ const DEFAULT_SETTINGS = {
 const blank = () => ({
   version: 4, settings: { ...DEFAULT_SETTINGS },
   weights: [], water: {}, sessions: [], exoLast: {}, tests: {},
-  breath: [], goalsDone: {}, notes: '', draft: null, steps: {}
+  breath: [], goalsDone: {}, notes: '', draft: null, steps: {},
+  habits: [], habitLog: {}
 });
 let state = blank();
 
@@ -113,7 +114,9 @@ function dayComplete(k) {
   const M = state.settings.modules;
   const eau = !M.eau || (state.water[k] || 0) >= state.settings.waterGoal;
   const pas = !M.pas || (state.steps[k] || 0) >= state.settings.stepsGoal;
-  return ses && eau && pas;
+  const log = state.habitLog[k] || {};
+  const habits = state.habits.every(h => log[h.id]);
+  return ses && eau && pas && habits;
 }
 // Jours consécutifs avec objectifs atteints, jusqu'à hier si la journée en cours n'est pas finie.
 function habitStreak() {
@@ -300,8 +303,47 @@ function renderToday() {
   $('#breathSuggest').innerHTML = `<h3>${esc(t.name)}</h3><div class="tags">${t.tags.map(x => `<span class="tag">${esc(x)}</span>`).join('')}</div>
     <p class="hint">${esc(t.rhythm)}, ${Math.round(t.duration / 60)} min</p>`;
   $('#breathSuggest').dataset.id = t.id;
+
+  renderHabits();
 }
 const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '±') + num(Math.abs(v));
+
+/* ---------- Habitudes personnalisées ---------- */
+function renderHabits() {
+  const k = today(), log = state.habitLog[k] || {};
+  $('#habitsList').innerHTML = state.habits.length ? state.habits.map(h => `<div class="list-row">
+    <button class="check" role="checkbox" aria-checked="${!!log[h.id]}" data-habit="${h.id}" aria-label="${esc(h.name)}"></button>
+    <span class="grow">${esc(h.name)}</span>
+    <button class="del" data-habitdel="${h.id}" aria-label="Supprimer l'habitude ${esc(h.name)}">${ICON_X}</button></div>`).join('')
+    : '<p class="empty">Ajoute une habitude que tu veux suivre au jour le jour.</p>';
+}
+$('#habitsList').addEventListener('click', async e => {
+  const chk = e.target.closest('[data-habit]');
+  if (chk) {
+    const k = today();
+    (state.habitLog[k] ||= {})[chk.dataset.habit] = !state.habitLog[k][chk.dataset.habit];
+    if (!state.habitLog[k][chk.dataset.habit]) delete state.habitLog[k][chk.dataset.habit];
+    save(); renderToday();
+    return;
+  }
+  const del = e.target.closest('[data-habitdel]');
+  if (del) {
+    const h = state.habits.find(x => x.id === del.dataset.habitdel);
+    if (!await confirmDlg('Supprimer cette habitude ?', `« ${h.name} » disparaîtra, avec son historique de cases cochées.`, 'Supprimer')) return;
+    state.habits = state.habits.filter(x => x.id !== h.id);
+    save(); renderHabits();
+    toast('Habitude supprimée.');
+  }
+});
+$('#habitForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const name = $('#habitInput').value.trim();
+  if (!name) return;
+  state.habits.push({ id: uid(), name, createdAt: today() });
+  $('#habitForm').reset();
+  save(); renderHabits();
+  toast('Habitude ajoutée.');
+});
 
 $('#todaySession').addEventListener('click', e => {
   const a = e.target.closest('[data-act]')?.dataset.act;
@@ -778,6 +820,9 @@ function renderRegul() {
   const stepsWeek = Object.entries(state.steps).filter(([k, v]) => k >= ws && k <= today_ && v).map(([, v]) => v);
   const breathWeek = state.breath.filter(b => b.date >= ws && b.date <= today_);
   const wWeek = state.weights.filter(w => w.date >= ws && w.date <= today_);
+  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(ws, i)).filter(k => k <= today_);
+  const habitPossible = state.habits.length * weekDays.length;
+  const habitDone = weekDays.reduce((a, k) => a + state.habits.filter(h => (state.habitLog[k] || {})[h.id]).length, 0);
   $('#regStats').innerHTML = [
     stat('Cette semaine', thisWeek + ' / ' + planned, '', 'séances prévues'),
     stat('Ce mois-ci', thisMonth, '', 'séances et activités'),
@@ -785,7 +830,8 @@ function renderRegul() {
     M.eau && waterWeek.length ? stat('Eau cette semaine', num(waterWeek.reduce((a, b) => a + b, 0) / waterWeek.length / 1000, 2), 'L/j', 'en moyenne') : '',
     M.pas && stepsWeek.length ? stat('Pas cette semaine', num(stepsWeek.reduce((a, b) => a + b, 0) / stepsWeek.length, 0), '', 'en moyenne par jour') : '',
     M.souffle && breathWeek.length ? stat('Respiration', Math.round(breathWeek.reduce((a, b) => a + b.sec, 0) / 60), 'min', 'cette semaine') : '',
-    wWeek.length >= 2 ? stat('Poids cette semaine', signed(wWeek.at(-1).value - wWeek[0].value), 'kg', 'depuis ' + fmtShort(wWeek[0].date)) : ''
+    wWeek.length >= 2 ? stat('Poids cette semaine', signed(wWeek.at(-1).value - wWeek[0].value), 'kg', 'depuis ' + fmtShort(wWeek[0].date)) : '',
+    habitPossible ? stat('Habitudes', habitDone + ' / ' + habitPossible, '', 'cases cochées cette semaine') : ''
   ].join('');
   const weeks = Array.from({ length: 10 }, (_, i) => addDays(ws, -7 * (9 - i)));
   Charts.bars($('#regChart'), {

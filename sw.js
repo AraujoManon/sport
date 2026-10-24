@@ -1,6 +1,6 @@
 // Service worker : l'app fonctionne entièrement hors ligne.
 // Change VERSION à chaque mise à jour des fichiers pour que les téléphones la récupèrent.
-const VERSION = 'mon-cadre-v4.3.0';
+const VERSION = 'mon-cadre-v4.4.0';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'charts.js', 'data.js', 'manifest.webmanifest',
   'fonts/fonts.css', 'fonts/figtree-normal.woff2', 'fonts/fraunces-normal.woff2', 'fonts/fraunces-italic.woff2',
