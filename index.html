@@ -124,6 +124,7 @@
     <button role="tab" data-p="poids" aria-selected="true">Poids</button>
     <button role="tab" data-p="pas" aria-selected="false" data-module="pas">Pas</button>
     <button role="tab" data-p="exos" aria-selected="false">Exercices</button>
+    <button role="tab" data-p="habitudes" aria-selected="false">Habitudes</button>
     <button role="tab" data-p="eau" aria-selected="false" data-module="eau">Eau</button>
     <button role="tab" data-p="tests" aria-selected="false" data-module="tests">Tests</button>
     <button role="tab" data-p="regul" aria-selected="false">Régularité</button>
@@ -153,6 +154,11 @@
     <div id="exoCards"></div>
     <h2 class="h2">Records</h2>
     <div class="card" id="records"></div>
+  </div>
+
+  <div data-panel="habitudes" hidden>
+    <p class="hint" style="margin-bottom:8px">Les 30 derniers jours, pour chaque habitude.</p>
+    <div id="habitCards"></div>
   </div>
 
   <div data-panel="eau" hidden>

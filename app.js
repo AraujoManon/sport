@@ -648,7 +648,35 @@ function rolling(list, days = 7) {
   });
 }
 function renderProgres() {
-  ({ poids: renderPoids, pas: renderPas, exos: renderExos, eau: renderEau, tests: renderTests, regul: renderRegul })[progTab]();
+  ({ poids: renderPoids, pas: renderPas, exos: renderExos, habitudes: renderHabitsProgress, eau: renderEau, tests: renderTests, regul: renderRegul })[progTab]();
+}
+function habitDoneOn(id, k) { return !!(state.habitLog[k] || {})[id]; }
+// Jours consécutifs cochés pour une seule habitude, jusqu'à hier si celle du jour n'est pas encore faite.
+function habitOwnStreak(id) {
+  let k = today();
+  if (!habitDoneOn(id, k)) k = addDays(k, -1);
+  let n = 0;
+  while (k >= state.settings.startDate && habitDoneOn(id, k)) { n++; k = addDays(k, -1); }
+  return n;
+}
+function renderHabitsProgress() {
+  const box = $('#habitCards');
+  if (!state.habits.length) {
+    box.innerHTML = '<div class="card"><p class="empty">Ajoute une habitude depuis l\'écran Aujourd\'hui pour voir son suivi ici.</p></div>';
+    return;
+  }
+  const days = Array.from({ length: 30 }, (_, i) => addDays(today(), i - 29));
+  box.innerHTML = state.habits.map(h => {
+    const hit = days.filter(k => habitDoneOn(h.id, k)).length;
+    const strk = habitOwnStreak(h.id);
+    const strip = days.map(k => {
+      const on = habitDoneOn(h.id, k);
+      return `<i class="${on ? 'on' : ''}" title="${esc(fmtShort(k))} : ${on ? 'faite' : 'pas faite'}"></i>`;
+    }).join('');
+    return `<div class="card exo-card"><div class="row between"><h3>${esc(h.name)}</h3>${strk ? `<span class="badge up">${strk} j de suite</span>` : ''}</div>
+      <p class="hint">${hit} / ${days.length} jours sur les 30 derniers</p>
+      <div class="habit-strip">${strip}</div></div>`;
+  }).join('');
 }
 function stat(label, value, unit = '', delta = '', cls = '') {
   return `<div class="stat"><div class="l">${label}</div><div class="n">${value}${unit ? `<small>${unit}</small>` : ''}</div>${delta ? `<div class="d ${cls}">${delta}</div>` : ''}</div>`;

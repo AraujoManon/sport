@@ -216,6 +216,9 @@ details.day.is-today>summary .dname{color:var(--rose)}
 .cal .c.s{background:var(--rose);color:var(--on-rose);font-weight:600}
 .cal .c.e::after{content:"";position:absolute;bottom:4px;width:5px;height:5px;border-radius:50%;background:var(--eau)}
 .cal .c.t{box-shadow:inset 0 0 0 2px var(--ink)}
+.habit-strip{display:flex;flex-wrap:wrap;gap:4px;margin:10px 0 2px}
+.habit-strip i{width:16px;height:16px;border-radius:5px;background:var(--sunk);flex-shrink:0}
+.habit-strip i.on{background:var(--olive)}
 
 /* ---------- Respiration ---------- */
 .tech{display:block;width:100%;text-align:left}
